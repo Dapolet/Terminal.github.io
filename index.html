@@ -1,0 +1,3668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WebTerminal 1.0</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='2.5' width='14' height='11' rx='2' fill='%23010409' stroke='%2358a6ff' stroke-width='1.2'/%3E%3Cpath d='M4 6.5 6.5 9 4 11.5' fill='none' stroke='%23e6edf3' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M8.5 11.5h3.5' fill='none' stroke='%23e6edf3' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+<style>
+/* ============================================================
+   THEME TOKENS
+   All colors/shadows live in CSS variables so themes can be
+   swapped simply by flipping data-theme on <body>.
+   ============================================================ */
+:root {
+  --font-mono: ui-monospace, "Cascadia Code", "Consolas", "SF Mono", "JetBrains Mono", "Menlo", monospace;
+  --bg: #0d1117;              /* page background behind the frame  */
+  --frame-bg: #010409;        /* terminal interior background      */
+  --text: #e6edf3;            /* primary text color                */
+  --dim: #7d8590;             /* muted / secondary text            */
+  --prompt: #2f81f7;          /* prompt symbol + accents (VS Code blue) */
+  --accent: #58a6ff;          /* highlights / links                */
+  --ok: #3fb950;              /* success / directory color         */
+  --warn: #d29922;            /* warnings                          */
+  --err: #f85149;             /* errors                            */
+  --cyan: #39c5cf;
+  --magenta: #bc8cff;
+  --cursor: #e6edf3;          /* caret color                       */
+  --sel-bg: rgba(56, 139, 253, 0.35);
+  --sel-fg: #e6edf3;
+  --glow: rgba(88, 166, 255, 0.25);   /* CRT-ish glow               */
+  --scan-opacity: 0.05;               /* scanline strength          */
+  --vignette-opacity: 0.5;
+  --toolbar-bg: #161b22;
+  --border: #30363d;
+}
+
+/* Green phosphor theme */
+body[data-theme="green"] {
+  --bg: #050805;
+  --frame-bg: #000000;
+  --text: #33ff33;
+  --dim: #1f7a1f;
+  --prompt: #33ff33;
+  --accent: #66ff66;
+  --ok: #2ecc2e;
+  --warn: #d2d242;
+  --err: #ff4444;
+  --cyan: #33ffcc;
+  --magenta: #cc66ff;
+  --cursor: #33ff33;
+  --glow: rgba(51, 255, 51, 0.22);
+  --scan-opacity: 0.09;
+  --toolbar-bg: #0a0f0a;
+  --border: #1f3d1f;
+}
+
+/* Amber phosphor theme */
+body[data-theme="amber"] {
+  --bg: #0d0800;
+  --frame-bg: #000000;
+  --text: #ffb000;
+  --dim: #7a5800;
+  --prompt: #ffb000;
+  --accent: #ffcc55;
+  --ok: #ffcf7a;
+  --warn: #ff9922;
+  --err: #ff5544;
+  --cyan: #ffd27a;
+  --magenta: #ffab45;
+  --cursor: #ffb000;
+  --glow: rgba(255, 176, 0, 0.22);
+  --scan-opacity: 0.09;
+  --toolbar-bg: #140e00;
+  --border: #5c4400;
+}
+
+/* Cyberpunk theme */
+body[data-theme="cyberpunk"] {
+  --bg: #0a0014;
+  --frame-bg: #12002b;
+  --text: #f8f3ff;
+  --dim: #8a7fb0;
+  --prompt: #00f0ff;
+  --accent: #ff2ad1;
+  --ok: #7bff00;
+  --warn: #ffd700;
+  --err: #ff0033;
+  --cyan: #00f0ff;
+  --magenta: #ff2ad1;
+  --cursor: #00f0ff;
+  --glow: rgba(0, 240, 255, 0.28);
+  --scan-opacity: 0.06;
+  --toolbar-bg: #1a0b33;
+  --border: #3b1f6e;
+}
+
+/* Catppuccin Mocha theme */
+body[data-theme="catppuccin"] {
+  --bg: #11111b;
+  --frame-bg: #1e1e2e;
+  --text: #cdd6f4;
+  --dim: #a6adc8;
+  --prompt: #89b4fa;
+  --accent: #89b4fa;
+  --ok: #a6e3a1;
+  --warn: #f9e2af;
+  --err: #f38ba8;
+  --cyan: #94e2d5;
+  --magenta: #cba6f7;
+  --cursor: #f5e0dc;
+  --sel-bg: rgba(137, 180, 250, 0.35);
+  --sel-fg: #cdd6f4;
+  --glow: rgba(137, 180, 250, 0.18);
+  --scan-opacity: 0.05;
+  --toolbar-bg: #313244;
+  --border: #45475a;
+}
+
+/* ============================================================
+   GLOBAL LAYOUT
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-mono);
+  background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--bg) 70%, #000), var(--bg) 75%);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  transition: background 0.3s ease;
+}
+
+/* Full-window canvas for the Matrix rain effect (hidden by default) */
+#matrix-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+}
+body.matrix #matrix-canvas { opacity: 1; }
+body.matrix .terminal-frame { background: rgba(0, 0, 0, 0.82); }
+body.matrix { background: #000; }
+
+/* CRT scanlines + vignette overlay, non-interactive */
+.crt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+.crt-overlay .scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03) 0px,
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: var(--scan-opacity);
+}
+.crt-overlay .vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.6) 100%);
+  opacity: var(--vignette-opacity);
+}
+
+/* ============================================================
+   TERMINAL FRAME
+   ============================================================ */
+.terminal-frame {
+  position: relative;
+  z-index: 10;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--frame-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 0 40px var(--glow),
+    0 30px 60px rgba(0, 0, 0, 0.6),
+    inset 0 0 80px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: box-shadow 0.3s ease, background 0.3s ease;
+}
+
+/* -------- Tiling terminal host -------- */
+#host-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  user-select: none;
+}
+#host-toolbar .title {
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#host-toolbar button {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+#host-toolbar button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.03);
+}
+.host-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+#workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  overflow: auto;
+  align-items: stretch;
+}
+.term-panel {
+  position: relative;
+  flex: 1 1 100%;
+  min-width: 340px;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+}
+body.multi .term-panel { flex: 1 1 0; min-width: 300px; min-height: 0; }
+.term-panel .panel-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 30;
+  width: 22px;
+  height: 22px;
+  line-height: 20px;
+  text-align: center;
+  border-radius: 5px;
+  color: var(--dim);
+  background: color-mix(in srgb, var(--toolbar-bg) 85%, transparent);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+.term-panel .panel-close:hover { color: var(--err); border-color: var(--err); }
+.term-iframe {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--frame-bg);
+}
+/* Embedded terminals (inside an iframe) show no host chrome and fill
+   the iframe flush, matching the inline first terminal's size. */
+body.embedded { padding: 0; }
+body.embedded #host-toolbar { display: none; }
+body.embedded #workspace { padding: 0; gap: 0; overflow: hidden; }
+body.embedded .term-panel { min-width: 0; min-height: 0; }
+body.embedded .panel-close { display: none; }
+
+/* -------- Toolbar -------- */
+.toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  flex-wrap: wrap;
+}
+.toolbar .dots { display: flex; gap: 7px; }
+.toolbar .dot { width: 11px; height: 11px; border-radius: 50%; }
+.toolbar .dot.r { background: #ff5f57; }
+.toolbar .dot.y { background: #febc2e; }
+.toolbar .dot.g { background: #28c840; }
+.toolbar .title {
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toolbar .controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.toolbar label { font-size: 11px; color: var(--dim); }
+.toolbar select {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.toolbar select:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.03);
+}
+.toolbar select option { background: var(--toolbar-bg); color: var(--text); }
+
+/* -------- Output area -------- */
+#output {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 16px 6px;
+  font-size: var(--fs, 14px);
+  line-height: 1.55;
+  word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#output::-webkit-scrollbar { width: 9px; }
+#output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+#output::-webkit-scrollbar-track { background: transparent; }
+
+/* Each printed line is a <pre>; keeps spacing & prevents wraps */
+#output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: inherit;
+  line-height: inherit;
+  color: var(--text);
+}
+
+/* Colored variants */
+#output pre.dim     { color: var(--dim); }
+#output pre.err     { color: var(--err); }
+#output pre.ok      { color: var(--ok); }
+#output pre.warn    { color: var(--warn); }
+#output pre.accent  { color: var(--accent); }
+#output pre.cyan    { color: var(--cyan); }
+#output pre.magenta { color: var(--magenta); }
+#output pre.prompt  { color: var(--prompt); }
+#output pre.title   {
+  color: var(--accent);
+  font-weight: bold;
+  text-shadow: 0 0 8px var(--glow);
+}
+
+/* -------- Input line -------- */
+#input-line {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 14px;
+  background: linear-gradient(to top, var(--frame-bg), color-mix(in srgb, var(--frame-bg) 94%, var(--accent) 6%));
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: var(--fs, 14px);
+}
+#input-line .prompt {
+  color: var(--prompt);
+  font-weight: bold;
+  flex: 0 0 auto;
+  margin-left: -8px;           /* cancel the flex gap so the path and $ join: ~$, ~/docs$ */
+  text-shadow: 0 0 6px var(--glow);
+}
+#input-line .cwd-hint {
+  color: var(--ok);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* The real input is transparent; text shows on the plain input background */
+#command-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: inherit;
+  padding: 0;
+  caret-color: var(--cursor);
+  animation: caret-blink 1.06s steps(1) infinite;
+}
+@keyframes caret-blink { 0%, 100% { caret-color: var(--cursor); } 50% { caret-color: transparent; } }
+
+#command-input::selection { background: var(--sel-bg); color: var(--sel-fg); }
+
+/* -------- nano / vim editor overlay -------- */
+#editor-overlay {
+  display: none;
+  flex: 1 1 auto;
+  flex-direction: row;
+  min-height: 220px;
+  margin: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--frame-bg) 96%, #fff 4%);
+}
+#editor-overlay.active { display: flex; }
+#editor-gutter {
+  flex: 0 0 auto;
+  min-width: 40px;
+  overflow: hidden;
+  padding: 8px 8px 8px 4px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre;
+  background: color-mix(in srgb, var(--frame-bg) 92%, #000 8%);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+#editor-buffer {
+  flex: 1 1 auto;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  white-space: pre;
+  overflow: auto;
+  caret-color: var(--cursor);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#editor-buffer.readonly { color: var(--dim); }
+#editor-status {
+  flex: 0 0 auto;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+  background: var(--toolbar-bg);
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+#editor-status.active { display: flex; }
+#vim-cmd {
+  flex: 1 1 auto;
+  min-width: 120px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  caret-color: var(--cursor);
+}
+
+/* Visually hidden live region: the fast-scrolling #output stream keeps
+   aria-live="off" so screen readers don't announce every line; results
+   are funneled into this throttled polite region instead. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* -------- Responsive --------
+   Fullscreen/no-radius mode only for the host page. Embedded iframe
+   tiles can be narrower than 640px; they must keep the rounded frame
+   so they match the inline first terminal. */
+@media (max-width: 640px) {
+  body:not(.embedded) { padding: 0; }
+  body:not(.embedded) .terminal-frame { border-radius: 0; height: 100%; width: 100%; }
+  body:not(.embedded) .toolbar .title { display: none; }
+  body:not(.embedded) #output { padding: 10px 10px 4px; }
+}
+</style>
+</head>
+<body data-theme="vs">
+
+<canvas id="matrix-canvas"></canvas>
+
+<!-- Tiling host toolbar -->
+<header id="host-toolbar">
+  <div class="dots" aria-hidden="true">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+  </div>
+  <svg class="host-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+    <rect x="1" y="2.5" width="14" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+    <path d="M4 6.5 6.5 9 4 11.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M8.5 11.5h3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  </svg>
+  <div class="title">WebTerminal — tiling host</div>
+  <button type="button" id="new-terminal-btn" aria-label="Open a new terminal">+ terminal</button>
+</header>
+
+<div id="workspace">
+  <div class="term-panel" id="panel-0">
+    <section class="terminal-frame" id="terminal-frame">
+      <header class="toolbar">
+        <div class="dots" aria-hidden="true">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        </div>
+        <div class="title">user@localhost: ~ — WebTerminal 1.0</div>
+      </header>
+
+      <!-- Scrollable output (off: announcing every scrolled line would flood a screen reader) -->
+      <main id="output" aria-live="off"></main>
+      <div id="sr-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+      <!-- nano editor (hidden until `nano` is invoked) -->
+      <section id="editor-overlay" aria-label="nano text editor">
+        <div id="editor-gutter"></div>
+        <textarea id="editor-buffer" spellcheck="false" autocomplete="off"></textarea>
+      </section>
+      <div id="editor-status"><span id="editor-status-text"></span><input id="vim-cmd" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="vim command" /></div>
+
+      <!-- Fixed input line -->
+      <footer id="input-line">
+        <span class="cwd-hint" id="cwd-hint">~</span>
+        <span class="prompt" id="prompt-span" aria-hidden="true">$</span>
+        <input id="command-input" type="text"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+               aria-label="Terminal command" />
+      </footer>
+    </section>
+  </div>
+</div>
+
+<div class="crt-overlay" aria-hidden="true">
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+</div>
+
+<script>
+/* =====================================================================
+   WebTerminal 1.0 — a self-contained terminal emulator.
+   No external dependencies; runs offline in any modern browser.
+   ===================================================================== */
+(function () {
+  "use strict";
+
+  /* ---------------------------------------------------------------
+   * DOM references
+   * ------------------------------------------------------------- */
+  var outputEl     = document.getElementById("output");
+  var inputEl      = document.getElementById("command-input");
+  var inputLineEl  = document.getElementById("input-line");
+  var cwdHintEl    = document.getElementById("cwd-hint");
+  var themeSelect  = document.getElementById("theme-select");
+  var fontSelect   = document.getElementById("font-select");
+  var matrixCanvas = document.getElementById("matrix-canvas");
+  var editorOv     = document.getElementById("editor-overlay");
+  var editorBuf    = document.getElementById("editor-buffer");
+  var editorGut    = document.getElementById("editor-gutter");
+  var editorStatus = document.getElementById("editor-status");
+  var editorStatusText = document.getElementById("editor-status-text");
+  var vimCmd       = document.getElementById("vim-cmd");
+  var promptSpan   = document.getElementById("prompt-span");
+  var workspaceEl  = document.getElementById("workspace");
+  var newTermBtn   = document.getElementById("new-terminal-btn");
+
+  /* ---------------------------------------------------------------
+   * Global state
+   * ------------------------------------------------------------- */
+  var USER = "user", HOST = "localhost";          // static identity
+  var history = [];                                // executed commands
+  var historyIndex = 0;                            // up/down navigation
+  var historyDraft = "";                           // unsaved typed text
+  var cwd = ["home", "user"];                  // simulated cwd as path
+  var editing = null;                              // nano/vim state
+  var matrixRunning = false;
+  var replActive = false;                          // Python REPL mode
+  var pyRepl = null;                               // { lines: [...] }
+  var pyodideLoading = false;                      // Pyodide load in progress
+  var pyWaiters = [];                              // callbacks waiting for Pyodide
+  var FS_KEY = "webterm_fs_v5";                    // localStorage key
+
+  /* ---------------------------------------------------------------
+   * Simulated file system.
+   * A directory is {files:{...}, dirs:{...}}; a file is a string.
+   * ------------------------------------------------------------- */
+  // Bare system: starts with just a home directory containing the
+  // always-present ~/pers folder plus a default ~/.bashrc template
+  // (commented examples + a couple of active samples) so `nano
+  // .bashrc`, `export`, and `alias` work from a fresh boot.
+  // Everything else only exists after you create it.
+  // The root node is { dirs: {...}, files: {...} }.
+  var fs = { dirs: {
+    home: { dirs: {
+      user: { dirs: { pers: { dirs: {}, files: {} } }, files: {
+        ".bashrc": [
+          "# WebTerminal config — exports and aliases are applied at boot",
+          "# Edit this file (nano .bashrc) or use the `export` / `alias` commands.",
+          "# Uncomment a sample below to enable it.",
+          "",
+          "# ---- Sample exports (uncomment to enable) ----",
+          "# export EDITOR=nano",
+          "# export LANG=en_US.UTF-8",
+          "",
+          "# ---- Sample aliases (uncomment to enable) ----",
+          "# alias la='ls -a'",
+          "# alias c='clear'",
+          "",
+          "# ---- Active sample config ----",
+          "export EDITOR=nano",
+          "alias ll='ls -l'"
+        ].join("\n") + "\n"
+      } }
+    }, files: {} }
+  }, files: {} };
+
+  /* ---- filesystem persistence ------------------------------------
+   * The whole simulated FS is JSON-serialized to localStorage so edits
+   * (nano/vim, touch, mkdir, curl -o …) survive a page reload.
+   * ---------------------------------------------------------------- */
+  var fsInitial = JSON.parse(JSON.stringify(fs));
+
+  function saveFs() {
+    broadcast("fs", JSON.stringify(fs));
+  }
+  function loadFs() {
+    try {
+      var raw = localStorage.getItem(FS_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && parsed.dirs) fs = parsed;
+      }
+    } catch (e) { /* ignore corrupt storage */ }
+  }
+
+  /* ---- cross-terminal live sync -----------------------------------
+   * Every terminal shares one FS plus one theme/font. When any of them
+   * mutates state it writes localStorage (persistence + separate tabs)
+   * AND postMessages the payload to sibling tiles + the parent page so
+   * every open terminal updates instantly. Receivers apply silently and
+   * never re-broadcast, which keeps the relays acyclic.
+   * ---------------------------------------------------------------- */
+  var THEME_KEY = "webterm_theme";
+  var FONT_KEY  = "webterm_font";
+
+  function postFrames(kind, payload) {
+    if (!document.querySelectorAll) return;
+    var frames = document.querySelectorAll("iframe.term-iframe");
+    for (var i = 0; i < frames.length; i++) {
+      var cw = frames[i].contentWindow;
+      if (cw && cw.postMessage) cw.postMessage({ type: "webterm", kind: kind, payload: payload }, "*");
+    }
+  }
+  function broadcast(kind, payload) {
+    try {
+      if (kind === "fs") localStorage.setItem(FS_KEY, payload);
+      else if (kind === "theme") localStorage.setItem(THEME_KEY, payload);
+      else if (kind === "font") localStorage.setItem(FONT_KEY, String(payload));
+    } catch (e) { /* private mode / disabled */ }
+    postFrames(kind, payload);
+    if (embeddedTerm && window.parent && window.parent.postMessage) {
+      window.parent.postMessage({ type: "webterm", kind: kind, payload: payload }, "*");
+    }
+  }
+  function applyFsPayload(raw) {
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.dirs) {
+        fs = parsed;
+        loadBashrc();
+        updateCwdHint();
+      }
+    } catch (e) { /* ignore malformed payload */ }
+  }
+  function applyRemote(kind, payload) {
+    if (kind === "fs") applyFsPayload(payload);
+    else if (kind === "theme") {
+      var t = typeof payload === "string" ? payload.toLowerCase() : "";
+      if (themeAliases[t]) setThemeSilent(themeAliases[t]);
+    }
+    else if (kind === "font") {
+      var px = parseInt(payload, 10);
+      if (isFinite(px) && px >= 8 && px <= 32) setFontSilent(px);
+    }
+  }
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || m.type !== "webterm") return;
+    applyRemote(m.kind, m.payload);
+    if (!embeddedTerm) postFrames(m.kind, m.payload);   // top page relays to every tile
+  });
+  window.addEventListener("storage", function (e) {
+    if (e.key === FS_KEY) applyFsPayload(e.newValue || "");
+    else if (e.key === THEME_KEY) {
+      var t = String(e.newValue || "").toLowerCase();
+      if (themeAliases[t]) setThemeSilent(themeAliases[t]);
+    }
+    else if (e.key === FONT_KEY) {
+      var px = parseInt(e.newValue || "", 10);
+      if (isFinite(px) && px >= 8 && px <= 32) setFontSilent(px);
+    }
+  });
+
+  /* ---------------------------------------------------------------
+   * Output helpers
+   * textContent is used everywhere → no HTML injection.
+   * ------------------------------------------------------------- */
+  var srLive        = document.getElementById("sr-live");       // hidden ARIA live region
+  var lastAnnounced = 0;
+  var announceTimer = null;
+  var pendingAnnounce = "";
+  function announce(text) {
+    if (!srLive) return;
+    pendingAnnounce = String(text);
+    if (announceTimer) return;                       // coalesce bursts into one readout
+    var since = Date.now() - lastAnnounced;
+    announceTimer = setTimeout(function () {
+      announceTimer = null;
+      lastAnnounced = Date.now();
+      srLive.textContent = "";
+      srLive.textContent = pendingAnnounce;          // reset+set so repeat lines re-announce
+    }, Math.max(0, 1000 - since));
+  }
+  /* Direct screen write — bypasses capture/announce (used for echoes,
+     the boot banner, and anything that must not enter a pipe or file). */
+  function printDom(text, cls) {
+    var pre = document.createElement("pre");
+    pre.textContent = text;
+    if (cls) pre.className = cls;
+    outputEl.appendChild(pre);
+    scrollBottom();
+    announce(text);
+  }
+  /* Capture mode for `cmd | other` and `cmd > file`. When active, printed
+     lines are buffered instead of written to the screen. */
+  var outCapture = null;                             // null | { lines: [] }
+  var chainFailed = false;                           // set when an "err" line prints
+  function print(text, cls) {
+    if (cls === "err") chainFailed = true;
+    if (outCapture) { outCapture.lines.push(String(text)); return; }
+    printDom(text, cls);
+  }
+
+  /* ---------------------------------------------------------------
+   * Environment variables, shell options and aliases
+   * ------------------------------------------------------------- */
+  var envVars = {
+    HOME: "/home/user",
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    SHELL: "/bin/bash",
+    TERM: "xterm-256color",
+    USER: USER,
+    HOST: HOST,
+    PWD: "/home/user"
+  };
+  var envOptions = { errexit: false, nounset: false, xtrace: false };
+  function envDefaults() {
+    return {
+      HOME: "/home/user", PATH: "/usr/local/bin:/usr/bin:/bin",
+      SHELL: "/bin/bash", TERM: "xterm-256color",
+      USER: USER, HOST: HOST, PWD: "/home/user"
+    };
+  }
+  var aliases = {};
+
+  /* Expand $NAME and ${NAME}; single-quoted text is never expanded here
+     (splitArgsText only passes double-quoted/bare strings through). */
+  function expandVars(str) {
+    return String(str).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, function (m, braced, bare) {
+      var k = braced || bare;
+      if (!(k in envVars)) {
+        if (envOptions.nounset) { print("$" + k + ": unbound variable", "err"); return ""; }
+        return "";
+      }
+      return envVars[k];
+    });
+  }
+
+  /* Expand a single leading alias name (recursively, bounded). */
+  function resolveAliases(args) {
+    var depth = 0;
+    while (depth < 10 && args.length) {
+      var name = args[0];
+      var value = aliases[name];
+      if (value === undefined) break;
+      var parts = splitArgsText(value);
+      args = parts.concat(args.slice(1));
+      depth++;
+    }
+    return args;
+  }
+
+  /* Config lives in ~/.bashrc (inside the FS). It can hold `export NAME=value`
+     lines (env vars) and `alias name=value` lines, both applied at boot.
+     ~/.bashrc survives `reboot` (which wipes everything else); `reset`
+     restores the default template. bashExports tracks the exports declared
+     there so the `export` command can persist new vars into the file.
+     writeBashrc preserves the template's comment lines so they survive the
+     first `export`/`alias`/`unalias`. */
+  var bashExports = {};
+  function parseBashrc(body) {
+    var out = { exports: {}, aliases: {} };
+    String(body || "").split("\n").forEach(function (line) {
+      var em = /^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      if (em) { out.exports[em[1]] = em[2]; return; }
+      var am = /^\s*alias\s+([A-Za-z0-9_.-]+)\s*=\s*['"]?(.*?)['"]?\s*$/.exec(line);
+      if (am) out.aliases[am[1]] = am[2];
+    });
+    return out;
+  }
+  function loadBashrc() {
+    var oldExports = bashExports;
+    aliases = {};
+    bashExports = {};
+    Object.keys(oldExports).forEach(function (k) { delete envVars[k]; });
+    var home = fs.dirs.home && fs.dirs.home.dirs && fs.dirs.home.dirs.user;
+    if (!home || !home.files || !home.files[".bashrc"]) return;
+    var st = parseBashrc(home.files[".bashrc"]);
+    aliases = st.aliases;
+    bashExports = st.exports;
+    Object.keys(st.exports).forEach(function (k) { envVars[k] = st.exports[k]; });
+  }
+  function writeBashrc() {
+    var home = fs.dirs.home.dirs.user;
+    var st = parseBashrc(home.files[".bashrc"]);
+    var ex = {};
+    Object.keys(st.exports).forEach(function (k) { ex[k] = st.exports[k]; });
+    Object.keys(bashExports).forEach(function (k) { ex[k] = bashExports[k]; });
+    var lines = ["# WebTerminal config — exports and aliases are applied at boot"];
+    String(home.files[".bashrc"] || "").split("\n").forEach(function (l) {
+      var isHeader = l.replace(/^#\s*/, "").trim() === "WebTerminal config — exports and aliases are applied at boot";
+      if (isHeader) return;                                  // header is re-emitted once
+      if (/^\s*#/.test(l) || l.trim() === "") lines.push(l); // keep template comments/blanks
+    });
+    Object.keys(ex).forEach(function (k) { lines.push("export " + k + "=" + ex[k]); });
+    Object.keys(aliases).forEach(function (k) {
+      var v = aliases[k];
+      var q = v.indexOf("'") >= 0 ? '"' : "'";
+      lines.push("alias " + k + "=" + q + v + q);
+    });
+    home.files[".bashrc"] = lines.join("\n") + "\n";
+    saveFs();
+  }
+  function bashrcPath() { return ["home", "user", ".bashrc"]; }
+  function printHTML(text, cls) {
+    var pre = document.createElement("pre");
+    pre.innerHTML = text;
+    if (cls) pre.className = cls;
+    outputEl.appendChild(pre);
+    scrollBottom();
+  }
+  function scrollBottom() {
+    outputEl.scrollTop = outputEl.scrollHeight;
+  }
+
+  /* A live-updating typewriter: renders into ONE <pre> node */
+  function typewriteText(text, cls, interval, done) {
+    var pre = document.createElement("pre");
+    if (cls) pre.className = cls;
+    outputEl.appendChild(pre);
+    var i = 0;
+    (function tick() {
+      pre.textContent = text.slice(0, i) + "\u258c";
+      i++;
+      if (i <= text.length) {
+        setTimeout(tick, interval);
+      } else {
+        pre.textContent = text;
+        scrollBottom();
+        if (done) done();
+      }
+    })();
+    scrollBottom();
+  }
+
+  /* ---------------------------------------------------------------
+   * Echo a command line like a real terminal does
+   * ------------------------------------------------------------- */
+  function echoPrompt(rawCmd) {
+    printDom(getPrompt() + " " + rawCmd, "prompt");
+  }
+
+  /* ---------------------------------------------------------------
+   * Prompt string: user@host:cwd$
+   * ------------------------------------------------------------- */
+  function getPrompt() {
+    return USER + "@" + HOST + ":" + pathDisplay(cwd).replace(/^\/home\/user(\/|$)/, "~$1") + "$";
+  }
+  function pathDisplay(path) {
+    // Drop the root marker "" so ["","home","user"] renders "/home/user"
+    var parts = path.filter(function (p) { return p !== ""; });
+    return "/" + parts.join("/");
+  }
+  function homePath() { return ["home", "user"]; }
+
+  /* ---------------------------------------------------------------
+   * Filesystem helpers
+   * ------------------------------------------------------------- */
+  function resolveDir(pathArr) {
+    // returns {node, ok} where node is a dir object or null.
+    // The empty string "" is the root marker produced by expandPath("/").
+    var node = fs;
+    for (var i = 0; i < pathArr.length; i++) {
+      if (pathArr[i] === "") continue; // skip root marker
+      if (!node.dirs || !node.dirs[pathArr[i]]) return { node: null };
+      node = node.dirs[pathArr[i]];
+    }
+    return { node: node };
+  }
+  function resolveEntry(pathArr) {
+    // resolve a full path; last segment may be a file
+    if (pathArr.length === 0 || (pathArr.length === 1 && pathArr[0] === ""))
+      return { node: fs, type: "dir" };
+    var dir = resolveDir(pathArr.slice(0, -1));
+    if (!dir.node) return { node: null };
+    var name = pathArr[pathArr.length - 1];
+    if (dir.node.dirs && dir.node.dirs[name]) return { node: dir.node.dirs[name], type: "dir" };
+    if (dir.node.files && Object.prototype.hasOwnProperty.call(dir.node.files, name))
+      return { node: dir.node.files[name], type: "file" };
+    return { node: null };
+  }
+  /* Expand a user-supplied path ("." "./x" "../y" "/home/..." "~" "~/x") */
+  function expandPath(inputPath) {
+    if (inputPath === "~") return homePath().slice();
+    if (inputPath === "/") return [""];
+    if (inputPath === ".") return cwd.slice();
+    if (inputPath === "..") return cwd.slice(0, -1);
+    var base, rest;
+    if (inputPath.startsWith("/")) { base = [""]; rest = inputPath; }
+    else if (inputPath.startsWith("~/")) { base = homePath(); rest = inputPath.slice(2); }
+    else { base = cwd.slice(); rest = inputPath; }
+    var parts = rest.split("/").filter(function (p) { return p !== "." && p !== ""; });
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] === "..") { if (base.length > 1) base.pop(); }
+      else base.push(parts[i]);
+    }
+    return base;
+  }
+
+  /* ---------------------------------------------------------------
+   * Calculator — small recursive-descent parser (no eval).
+   * Supports + - * / % ^ and parentheses.
+   * ------------------------------------------------------------- */
+  function calcParse(expr) {
+    var i = 0;
+    function skip() { while (i < expr.length && /\s/.test(expr[i])) i++; }
+    function peek() { skip(); return expr[i]; }
+    function number() {
+      skip(); var s = "";
+      while (i < expr.length && /[0-9.]/.test(expr[i])) s += expr[i++];
+      if (s === "") throw new Error("expected number");
+      var v = parseFloat(s);
+      if (isNaN(v)) throw new Error("bad number");
+      return v;
+    }
+    function atom() {
+      skip();
+      if (peek() === "(") {
+        i++;
+        var v = addSub();
+        skip();
+        if (peek() !== ")") throw new Error("missing ')'");
+        i++;
+        return v;
+      }
+      return number();
+    }
+    function power() {
+      skip(); var v = atom();
+      while (peek() === "^") { i++; var r = power(); v = Math.pow(v, r); }
+      return v;
+    }
+    function mulDiv() {
+      skip(); var v = power();
+      while (peek() === "*" || peek() === "/" || peek() === "%") {
+        var op = peek(); i++;
+        var r = power();
+        if (op === "*") v *= r;
+        else if (op === "/") v /= r;
+        else v %= r;
+      }
+      return v;
+    }
+    function addSub() {
+      skip(); var v = mulDiv();
+      while (peek() === "+" || peek() === "-") {
+        var op = peek(); i++;
+        var r = mulDiv();
+        v = op === "+" ? v + r : v - r;
+      }
+      return v;
+    }
+    var result = addSub();
+    skip();
+    if (i < expr.length) throw new Error("unexpected '" + expr[i] + "'");
+    if (!isFinite(result)) throw new Error("result not finite");
+    return result;
+  }
+
+  /* ---------------------------------------------------------------
+   * Misc helpers
+   * ------------------------------------------------------------- */
+  function pad(n, w) { n = String(n); while (n.length < w) n = "0" + n; return n; }
+  function now() { return new Date(); }
+  function dateStr(d) {
+    var m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return d.getDate() + " " + m[d.getMonth()] + " " + d.getFullYear();
+  }
+  function timeStr(d) {
+    var h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    return pad(h,2) + ":" + pad(m,2) + ":" + pad(s,2);
+  }
+  /* Levenshtein distance for "did you mean" suggestions */
+  function levenshtein(a, b) {
+    var dp = [];
+    for (var i = 0; i <= a.length; i++) dp[i] = [i];
+    for (var j = 0; j <= b.length; j++) dp[0][j] = j;
+    for (i = 1; i <= a.length; i++) {
+      for (j = 1; j <= b.length; j++) {
+        var cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+      }
+    }
+    return dp[a.length][b.length];
+  }
+  function closestCommand(name) {
+    var best = null, bestD = 99;
+    Object.keys(commands).forEach(function (k) {
+      if (commands[k].hidden) return;
+      var d = levenshtein(name, k);
+      if (d < bestD && d <= Math.max(2, Math.floor(name.length / 3))) { bestD = d; best = k; }
+    });
+    return best;
+  }
+  /* Safe template for split lines inside a border box */
+  function boxLines(text, opts) {
+    opts = opts || {};
+    var width = opts.width || 46;
+    var lines = String(text).split("\n");
+    var out = [];
+    out.push(opts.top || "┌" + "─".repeat(width) + "┐");
+    lines.forEach(function (l) {
+      var padLen = Math.max(0, width - l.length);
+      out.push("│" + l + " ".repeat(padLen) + "│");
+    });
+    out.push(opts.bottom || "└" + "─".repeat(width) + "┘");
+    return out.join("\n");
+  }
+
+  /* =====================================================================
+   * COMMAND REGISTRY
+   * Each entry: { fn, help, usage, hidden }
+   * =================================================================== */
+  var commands = {};
+
+  /* ---------------- help ---------------- */
+  commands.help = {
+    help: "Show this help screen",
+    usage: "help [command]",
+    fn: function (args) {
+      if (args.length) {
+        var c = commands[args[0]];
+        if (!c) { print("help: no such command '" + args[0] + "'", "err"); return; }
+        print(c.usage ? "Usage: " + c.usage : "Usage: " + args[0]);
+        print(c.help);
+        return;
+      }
+      print("Available commands:", "title");
+      print("──────────────────────────────────────────────");
+      var names = Object.keys(commands).filter(function (k) { return !commands[k].hidden; }).sort();
+      var left = names.filter(function (_, idx) { return idx % 2 === 0; });
+      var right = names.filter(function (_, idx) { return idx % 2 === 1; });
+      names.forEach(function (k) {
+        var padLen = 17 - k.length;
+        print("  " + k + " ".repeat(padLen > 0 ? padLen : 1) + commands[k].help, "accent");
+      });
+      print("");
+      print("Tip: use Tab to autocomplete, ↑/↓ for history, Ctrl+C to cancel.", "dim");
+      print("Chaining: cmd1 && cmd2 · cmd1 ; cmd2 · cmd1 | cmd2 · cmd > file", "dim");
+    }
+  };
+
+  /* ---------------- echo ---------------- */
+  commands.echo = {
+    help: "Print text back to the terminal",
+    usage: "echo [text]",
+    fn: function (args) {
+      if (!args.length) { print(""); return; }
+      print(args.join(" "));
+    }
+  };
+
+  /* ---------------- date ---------------- */
+  commands.date = {
+    help: "Show the current date and time",
+    usage: "date",
+    fn: function () {
+      var d = now();
+      print(d.toDateString() + " " + timeStr(d) + " " + d.getFullYear());
+    }
+  };
+
+  /* ---------------- whoami ---------------- */
+  commands.whoami = {
+    help: "Print the current user",
+    usage: "whoami",
+    fn: function () { print(USER + "@" + HOST); }
+  };
+
+  /* ---------------- pwd ---------------- */
+  commands.pwd = {
+    help: "Print the working directory",
+    usage: "pwd",
+    fn: function () { print(pathDisplay(cwd)); }
+  };
+
+  /* ---------------- ls / dir ---------------- */
+  function lsDir(pathArr, all) {
+    var e = resolveEntry(pathArr.length ? pathArr : cwd);
+    if (e.node == null) return null;
+    if (e.type === "file") return "file:" + e.node;
+    var dir = e.node;
+    var entries = [];
+    function isHidden(n) { return n.charAt(0) === "."; }
+    Object.keys(dir.dirs || {}).forEach(function (n) { if (all || !isHidden(n)) entries.push({ n: n, type: "dir", node: dir.dirs[n] }); });
+    Object.keys(dir.files || {}).forEach(function (n) { if (all || !isHidden(n)) entries.push({ n: n, type: "file", node: dir.files[n] }); });
+    return entries.sort(function (a, b) {
+      if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+      return a.n.localeCompare(b.n);
+    });
+  }
+  function entrySize(e) {
+    if (e.type === "dir") {
+      return (e.node.dirs ? Object.keys(e.node.dirs).length : 0) +
+             (e.node.files ? Object.keys(e.node.files).length : 0);
+    }
+    return String(e.node).length;
+  }
+  function padRight(s, n) { while (s.length < n) s += " "; return s; }
+  commands.ls = {
+    help: "List directory contents (aliases: dir)",
+    usage: "ls [-la] [path]",
+    fn: function (args) {
+      var long = false, all = false, pathArg = null;
+      args.forEach(function (a) {
+        if (a.charAt(0) === "-" && a.length > 1) {
+          if (a.indexOf("l") >= 0) long = true;
+          if (a.indexOf("a") >= 0) all = true;
+        } else pathArg = a;
+      });
+      var target = pathArg ? expandPath(pathArg) : cwd;
+      var entries = lsDir(target, all);
+      if (entries === null) { print("ls: " + (pathArg || "") + ": No such file or directory", "err"); return; }
+      if (typeof entries === "string") { print(target[target.length - 1]); return; }
+      if (!entries.length) { print(""); return; }
+      if (long) {
+        print("total " + entries.length);
+        entries.forEach(function (e) {
+          var perms = e.type === "dir" ? "drwxr-xr-x" : "-rw-r--r--";
+          print(perms + "  " + padRight(USER + "@" + HOST, 16) + "  " + padRight(String(entrySize(e)), 6) + e.n + (e.type === "dir" ? "/" : ""));
+        });
+        return;
+      }
+      print(entries.map(function (e) {
+        return e.type === "dir" ? e.n + "/" : e.n;
+      }).join("    "));
+    }
+  };
+  commands.dir = { help: "List directory contents", usage: "dir", fn: commands.ls.fn, hidden: true };
+
+  /* ---------------- cd ---------------- */
+  commands.cd = {
+    help: "Change the working directory",
+    usage: "cd [path]",
+    fn: function (args) {
+      if (!args.length) { cwd = homePath(); envVars.PWD = pathDisplay(cwd); updateCwdHint(); return; }
+      var target = expandPath(args[0]);
+      var e = resolveEntry(target);
+      if (e.node == null || e.type !== "dir") {
+        print("cd: " + args[0] + ": No such file or directory", "err");
+        return;
+      }
+      cwd = target;
+      envVars.PWD = pathDisplay(cwd);
+      updateCwdHint();
+    }
+  };
+
+  /* ---------------- mkdir ---------------- */
+  commands.mkdir = {
+    help: "Create a directory",
+    usage: "mkdir <name...>",
+    fn: function (args) {
+      if (!args.length) { print("usage: mkdir <name...>", "warn"); return; }
+      var made = false;
+      args.forEach(function (arg) {
+        var target = expandPath(arg);
+        var parent = resolveDir(target.slice(0, -1));
+        var name = target[target.length - 1];
+        if (!parent.node) { print("mkdir: no such directory", "err"); return; }
+        if (parent.node.dirs[name] || (parent.node.files && parent.node.files[name] !== undefined)) {
+          print("mkdir: '" + name + "' already exists", "warn"); return;
+        }
+        parent.node.dirs[name] = { dirs: {}, files: {} };
+        made = true;
+      });
+      if (made) saveFs();
+    }
+  };
+
+  /* ---------------- touch ---------------- */
+  commands.touch = {
+    help: "Create an empty file",
+    usage: "touch <name...>",
+    fn: function (args) {
+      if (!args.length) { print("usage: touch <name...>", "warn"); return; }
+      var made = false;
+      args.forEach(function (arg) {
+        var target = expandPath(arg);
+        var parent = resolveDir(target.slice(0, -1));
+        var name = target[target.length - 1];
+        if (!parent.node) { print("touch: no such directory", "err"); return; }
+        if (parent.node.dirs && parent.node.dirs[name]) { print("touch: '" + name + "' is a directory", "warn"); return; }
+        if (parent.node.files[name] === undefined) { parent.node.files[name] = ""; made = true; }
+      });
+      if (made) saveFs();
+    }
+  };
+
+  /* ---------------- rm ---------------- */
+  commands.rm = {
+    help: "Remove a file or directory",
+    usage: "rm [-rf] <name>",
+    fn: function (args) {
+      var recurse = false, force = false, targetArg = null;
+      args.forEach(function (a) {
+        if (a === "-r" || a === "-rf") recurse = true;
+        else if (a === "-f" || a === "-fr") force = true;
+        else targetArg = a;
+      });
+      if (!targetArg) { print("usage: rm [-rf] <name>", "warn"); return; }
+      var target = expandPath(targetArg);
+      if (target.length === 1 && target[0] === "") {
+        print("rm: it is dangerous to operate recursively on '/'", "err");
+        return;
+      }
+      var parent = resolveDir(target.slice(0, -1));
+      var name = target[target.length - 1];
+      if (!parent.node) { if (!force) print("rm: no such directory", "err"); return; }
+      if (parent.node.files && Object.prototype.hasOwnProperty.call(parent.node.files, name)) {
+        delete parent.node.files[name];
+        saveFs();
+        return;
+      }
+      if (parent.node.dirs && parent.node.dirs[name]) {
+        if (!recurse) { print("rm: cannot remove '" + name + "': Is a directory", "warn"); return; }
+        delete parent.node.dirs[name];
+        saveFs();
+        return;
+      }
+      if (!force) print("rm: " + targetArg + ": No such file or directory", "err");
+    }
+  };
+
+  /* ---------------- mv ---------------- */
+  function isPathInside(child, parent) {
+    for (var i = 0; i < parent.length; i++) {
+      if (parent[i] !== child[i]) return false;
+    }
+    return true;
+  }
+  commands.mv = {
+    help: "Move or rename a file or directory",
+    usage: "mv <src> <dest>",
+    fn: function (args) {
+      if (args.length < 2) { print("usage: mv <src> <dest>", "warn"); return; }
+      var src = expandPath(args[0]);
+      var e = resolveEntry(src);
+      if (e.node == null) { print("mv: " + args[0] + ": No such file or directory", "err"); return; }
+      var srcParent = resolveDir(src.slice(0, -1));
+      var srcName = src[src.length - 1];
+      var dest = expandPath(args[1]);
+      var destEntry = resolveEntry(dest);
+      if (destEntry.node != null && destEntry.type === "dir") {
+        dest = dest.concat([srcName]);        // mv x dir  →  dir/x
+        destEntry = null;
+      }
+      if (e.type === "dir" && isPathInside(dest, src)) {
+        print("mv: cannot move '" + args[0] + "' to a subdirectory of itself", "err");
+        return;
+      }
+      var destParent = resolveDir(dest.slice(0, -1));
+      var destName = dest[dest.length - 1];
+      if (!destParent.node || !destName) { print("mv: no such directory", "err"); return; }
+      if (e.type === "file" && destParent.node.dirs && destParent.node.dirs[destName]) {
+        print("mv: cannot overwrite directory '" + destName + "' with a file", "err"); return;
+      }
+      if (e.type === "dir" && destParent.node.files && destParent.node.files[destName] !== undefined) {
+        print("mv: cannot overwrite file '" + destName + "' with a directory", "err"); return;
+      }
+      if (e.type === "dir") {
+        destParent.node.dirs[destName] = srcParent.node.dirs[srcName];
+        delete srcParent.node.dirs[srcName];
+      } else {
+        destParent.node.files[destName] = srcParent.node.files[srcName];
+        delete srcParent.node.files[srcName];
+      }
+      saveFs();
+      print("Moved " + args[0] + " → " + pathDisplay(dest), "ok");
+    }
+  };
+
+  /* ---------------- cp ---------------- */
+  commands.cp = {
+    help: "Copy a file (or -r a directory)",
+    usage: "cp [-r] <src> <dest>",
+    fn: function (args) {
+      var recurse = false, files = [];
+      args.forEach(function (a) { if (a === "-r") recurse = true; else files.push(a); });
+      if (files.length < 2) { print("usage: cp [-r] <src> <dest>", "warn"); return; }
+      var src = expandPath(files[0]);
+      var e = resolveEntry(src);
+      if (e.node == null) { print("cp: " + files[0] + ": No such file or directory", "err"); return; }
+      var srcName = src[src.length - 1];
+      var dest = expandPath(files[1]);
+      var destEntry = resolveEntry(dest);
+      if (destEntry.node != null && destEntry.type === "dir") {
+        dest = dest.concat([srcName]);        // cp x dir  →  dir/x
+        destEntry = null;
+      }
+      if (e.type === "dir" && isPathInside(dest, src)) {
+        print("cp: cannot copy '" + files[0] + "' into itself", "err");
+        return;
+      }
+      var destParent = resolveDir(dest.slice(0, -1));
+      var destName = dest[dest.length - 1];
+      if (!destParent.node || !destName) { print("cp: no such directory", "err"); return; }
+      if (e.type === "dir") {
+        if (!recurse) { print("cp: omitting directory '" + files[0] + "' (use cp -r)", "warn"); return; }
+        if (destParent.node.files && destParent.node.files[destName] !== undefined) {
+          print("cp: cannot overwrite file '" + destName + "' with a directory", "err"); return;
+        }
+        destParent.node.dirs[destName] = JSON.parse(JSON.stringify(e.node));
+      } else {
+        if (destParent.node.dirs && destParent.node.dirs[destName]) {
+          print("cp: cannot overwrite directory '" + destName + "' with a file", "err"); return;
+        }
+        destParent.node.files[destName] = e.node;
+      }
+      saveFs();
+      print("Copied " + files[0] + " → " + pathDisplay(dest), "ok");
+    }
+  };
+
+  /* ---------------- zip / unzip ----------------
+   * Real ZIP archives (STORE method only, no compression) so files are
+   * interoperable with real zip/unzip tools if exported. Files in the
+   * simulated FS are byte-safe strings (0-255). */
+  var CRC_TABLE = (function () {
+    var t = new Array(256), i, j, c;
+    for (i = 0; i < 256; i++) {
+      c = i;
+      for (j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(s) {
+    var c = 0xFFFFFFFF, i;
+    for (i = 0; i < s.length; i++) c = CRC_TABLE[(c ^ s.charCodeAt(i)) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function binToString(bytes) { var s = "", i; for (i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return s; }
+  function stringToBytes(s) { var out = new Uint8Array(s.length), i; for (i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xFF; return out; }
+  function zipU16(b, o, v) { b[o] = v & 0xFF; b[o + 1] = (v >> 8) & 0xFF; }
+  function zipU32(b, o, v) { b[o] = v & 0xFF; b[o + 1] = (v >> 8) & 0xFF; b[o + 2] = (v >> 16) & 0xFF; b[o + 3] = (v >> 24) & 0xFF; }
+  function zipArchive(entries) {
+    var locals = [], centrals = [], cdOffset = 0;
+    entries.forEach(function (e) {
+      var data = e.data || "";
+      var crc = crc32(data);
+      var nl = e.name.length;
+      var local = new Uint8Array(30 + nl + data.length);
+      zipU32(local, 0, 0x04034b50);
+      zipU16(local, 4, 20);
+      zipU16(local, 6, 0x0800);
+      zipU16(local, 8, 0);
+      zipU16(local, 10, 0); zipU16(local, 12, 0);
+      zipU32(local, 14, crc);
+      zipU32(local, 18, data.length);
+      zipU32(local, 22, data.length);
+      zipU16(local, 26, nl);
+      zipU16(local, 28, 0);
+      var i;
+      for (i = 0; i < nl; i++) local[30 + i] = e.name.charCodeAt(i) & 0xFF;
+      for (i = 0; i < data.length; i++) local[30 + nl + i] = data.charCodeAt(i) & 0xFF;
+      var central = new Uint8Array(46 + nl);
+      zipU32(central, 0, 0x02014b50);
+      zipU16(central, 4, 20);
+      zipU16(central, 6, 20);
+      zipU16(central, 8, 0x0800);
+      zipU16(central, 10, 0);
+      zipU16(central, 12, 0); zipU16(central, 14, 0);
+      zipU32(central, 16, crc);
+      zipU32(central, 20, data.length);
+      zipU32(central, 24, data.length);
+      zipU16(central, 28, nl);
+      zipU16(central, 30, 0);
+      zipU16(central, 32, 0);
+      zipU16(central, 34, 0);
+      zipU16(central, 36, 0);
+      zipU32(central, 38, e.isDir ? 0x10 : 0);
+      zipU32(central, 42, cdOffset);
+      for (i = 0; i < nl; i++) central[46 + i] = e.name.charCodeAt(i) & 0xFF;
+      locals.push(binToString(local));
+      centrals.push(binToString(central));
+      cdOffset += local.length;
+    });
+    var cdSize = 0, i;
+    for (i = 0; i < centrals.length; i++) cdSize += centrals[i].length;
+    var eocd = new Uint8Array(22);
+    zipU32(eocd, 0, 0x06054b50);
+    zipU16(eocd, 4, 0); zipU16(eocd, 6, 0);
+    zipU16(eocd, 8, entries.length); zipU16(eocd, 10, entries.length);
+    zipU32(eocd, 12, cdSize);
+    zipU32(eocd, 16, cdOffset);
+    zipU16(eocd, 20, 0);
+    return locals.join("") + centrals.join("") + binToString(eocd);
+  }
+  function zipReadU16(b, o) { return (b[o] | (b[o + 1] << 8)) >>> 0; }
+  function zipReadU32(b, o) { return ((b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0); }
+  function parseZip(b) {
+    var n = b.length, eocd = -1, i;
+    for (i = n - 22; i >= 0; i--) {
+      if (b[i] === 0x50 && b[i + 1] === 0x4b && b[i + 2] === 0x05 && b[i + 3] === 0x06) { eocd = i; break; }
+    }
+    if (eocd < 0) return null;
+    var count = zipReadU16(b, eocd + 10);
+    var cdOff = zipReadU32(b, eocd + 16);
+    var entries = [], p = cdOff;
+    for (var k = 0; k < count; k++) {
+      if (p + 46 > n) return null;
+      if (zipReadU32(b, p) !== 0x02014b50) return null;
+      var method = zipReadU16(b, p + 10);
+      var compSize = zipReadU32(b, p + 20);
+      var unSize = zipReadU32(b, p + 24);
+      var nameLen = zipReadU16(b, p + 28);
+      var extraLen = zipReadU16(b, p + 30);
+      var commentLen = zipReadU16(b, p + 32);
+      var localOff = zipReadU32(b, p + 42);
+      if (p + 46 + nameLen + extraLen + commentLen > n) return null;
+      var name = "";
+      for (i = 0; i < nameLen; i++) name += String.fromCharCode(b[p + 46 + i]);
+      var isDir = name.charAt(name.length - 1) === "/";
+      var data = "";
+      if (!isDir) {
+        if (method !== 0) return null;
+        if (localOff + 30 > n || zipReadU32(b, localOff) !== 0x04034b50) return null;
+        var localNameLen = zipReadU16(b, localOff + 26);
+        var localExtraLen = zipReadU16(b, localOff + 28);
+        var dataStart = localOff + 30 + localNameLen + localExtraLen;
+        if (localNameLen !== nameLen || dataStart + compSize > n) return null;
+        for (i = 0; i < nameLen; i++) {
+          if (b[localOff + 30 + i] !== b[p + 46 + i]) return null;   // local name must match central
+        }
+        for (i = 0; i < compSize; i++) data += String.fromCharCode(b[dataStart + i]);
+        if (unSize !== compSize) return null;
+      }
+      entries.push({ name: name, isDir: isDir, size: unSize, data: data });
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+  function collectZipEntries(node, relName, recurse, entries) {
+    if (typeof node === "string") { entries.push({ name: relName, data: node, isDir: false }); return; }
+    entries.push({ name: relName + "/", data: "", isDir: true });
+    if (!recurse) return;
+    var base = relName + "/";
+    Object.keys(node.dirs || {}).forEach(function (n) { collectZipEntries(node.dirs[n], base + n, true, entries); });
+    Object.keys(node.files || {}).forEach(function (n) { collectZipEntries(node.files[n], base + n, true, entries); });
+  }
+  commands.zip = {
+    help: "Create a ZIP archive",
+    usage: "zip [-r] <out.zip> <file|dir...>",
+    fn: function (args) {
+      var recurse = false;
+      if (args[0] === "-r") { recurse = true; args.shift(); }
+      if (args.length < 2) { print("usage: zip [-r] <out.zip> <file|dir...>", "warn"); return; }
+      var entries = [];
+      var failed = false;
+      args.slice(1).forEach(function (arg) {
+        var e = resolveEntry(expandPath(arg));
+        if (e.node == null) { print("zip: '" + arg + "': No such file or directory", "err"); failed = true; return; }
+        collectZipEntries(e.node, arg.replace(/^\.\//, ""), recurse, entries);
+      });
+      if (failed) return;
+      var bin = zipArchive(entries);
+      var out = expandPath(args[0]);
+      var parent = resolveDir(out.slice(0, -1));
+      var name = out[out.length - 1];
+      if (!parent.node || !name) { print("zip: cannot write to '" + args[0] + "'", "err"); return; }
+      parent.node.files[name] = bin;
+      saveFs();
+      print("Added " + entries.length + " entr" + (entries.length === 1 ? "y" : "ies") +
+        " to " + pathDisplay(out) + " (" + bin.length + " bytes)", "ok");
+    }
+  };
+  commands.unzip = {
+    help: "List or extract files from a ZIP archive",
+    usage: "unzip [-l] <file.zip> [-d <dir>]",
+    fn: function (args) {
+      var list = false, file = null, dest = cwd;
+      for (var i = 0; i < args.length; i++) {
+        if (args[i] === "-l") list = true;
+        else if (args[i] === "-d") { i++; if (i < args.length) dest = expandPath(args[i]); }
+        else if (!file) file = args[i];
+      }
+      if (!file) { print("usage: unzip [-l] <file.zip> [-d <dir>]", "warn"); return; }
+      var e = resolveEntry(expandPath(file));
+      if (e.node == null || typeof e.node !== "string") { print("unzip: '" + file + "': No such file or directory", "err"); return; }
+      var entries = parseZip(stringToBytes(e.node));
+      if (entries === null) { print("unzip: '" + file + "': invalid or unsupported zip file", "err"); return; }
+      if (list) {
+        print("Archive: " + pathDisplay(expandPath(file)));
+        print("  Length  Method    Size  Name");
+        entries.forEach(function (en) { print(padRight(String(en.size), 9) + " Stored       " + en.name); });
+        print("---------                     " + entries.length + " file(s)");
+        return;
+      }
+      var destE = resolveEntry(dest);
+      if (!destE.node || destE.type !== "dir") { print("unzip: target is not a directory", "err"); return; }
+      var files = 0;
+      entries.forEach(function (en) {
+        var parts = en.name.split("/").filter(Boolean);
+        var name = parts.pop();
+        var cur = destE.node;
+        var ok = true;
+        parts.forEach(function (p) { if (!cur.dirs[p]) cur.dirs[p] = { dirs: {}, files: {} }; cur = cur.dirs[p]; });
+        if (en.isDir || !name) {
+          if (name && !cur.dirs[name]) cur.dirs[name] = { dirs: {}, files: {} };
+          return;
+        }
+        cur.files[name] = en.data;
+        files++;
+        print("  inflating: " + en.name);
+      });
+      saveFs();
+      print("Extracted " + files + " file(s) to " + pathDisplay(dest), "ok");
+    }
+  };
+
+  /* ---------------- grep ---------------- */
+  commands.grep = {
+    help: "Search files (or stdin) for a pattern",
+    usage: "grep <pattern> [file...]",
+    fn: function (args, stdin) {
+      if (!args.length) { print("usage: grep <pattern> [file...]", "warn"); return; }
+      var re;
+      try { re = new RegExp(args[0]); }
+      catch (e) { print("grep: invalid pattern '" + args[0] + "'", "err"); return; }
+      function checkLine(ln, label) {
+        if (re.test(ln)) print((label ? label + ":" : "") + ln);
+      }
+      if (stdin != null) String(stdin).split("\n").forEach(function (ln) { checkLine(ln, ""); });
+      for (var i = 1; i < args.length; i++) {
+        var target = expandPath(args[i]);
+        var ent = resolveEntry(target);
+        if (!ent.node) { print("grep: " + args[i] + ": No such file or directory", "err"); continue; }
+        if (ent.type === "dir") { print("grep: " + args[i] + ": Is a directory", "err"); continue; }
+        String(ent.node).split("\n").forEach(function (ln) {
+          checkLine(ln, args.length - 1 > 1 ? args[i] : "");
+        });
+      }
+    }
+  };
+
+  /* ---------------- find ---------------- */
+  function findRec(node, base, out, nameRe) {
+    Object.keys(node.dirs || {}).sort().forEach(function (n) {
+      var p = base + "/" + n;
+      if (!nameRe || nameRe.test(n)) out.push(p + "/");
+      findRec(node.dirs[n], p, out, nameRe);
+    });
+    Object.keys(node.files || {}).sort().forEach(function (n) {
+      var p = base + "/" + n;
+      if (!nameRe || nameRe.test(n)) out.push(p);
+    });
+  }
+  commands.find = {
+    help: "Find files and directories by name",
+    usage: "find [path] [-name <pattern>]",
+    fn: function (args) {
+      var pathArg = ".", nameArg = null;
+      for (var i = 0; i < args.length; i++) {
+        if (args[i] === "-name") {
+          nameArg = args[i + 1];
+          if (nameArg === undefined) { print("find: -name requires a pattern", "err"); return; }
+          i++;
+        }
+        else pathArg = args[i];
+      }
+      var target = expandPath(pathArg);
+      var e = resolveEntry(target);
+      if (e.node == null || e.type !== "dir") { print("find: no such directory", "err"); return; }
+      var re = null;
+      if (nameArg) { try { re = new RegExp(nameArg); } catch (e2) { print("find: invalid -name pattern '" + nameArg + "'", "err"); return; } }
+      var out = [];
+      findRec(e.node, pathDisplay(target) === "/" ? "" : pathDisplay(target), out, re);
+      if (!out.length) return;
+      print(out.join("\n"));
+    }
+  };
+
+  /* ---------------- cat ---------------- */
+  commands.cat = {
+    help: "Print the contents of a file (or stdin)",
+    usage: "cat <file...>",
+    fn: function (args, stdin) {
+      if (!args.length) {
+        if (stdin != null) { print(stdin); return; }
+        print("usage: cat <file>", "warn");
+        return;
+      }
+      if (stdin != null) print(stdin);
+      for (var i = 0; i < args.length; i++) {
+        var target = expandPath(args[i]);
+        var e = resolveEntry(target);
+        if (e.node == null) { print("cat: " + args[i] + ": No such file or directory", "err"); continue; }
+        if (e.type === "dir") { print("cat: " + args[i] + ": Is a directory", "err"); continue; }
+        print(e.node);
+      }
+    }
+  };
+
+  /* ---------------- tree ---------------- */
+  function treeRec(node, prefix, out) {
+    var dirs = Object.keys(node.dirs || {}).sort();
+    var files = Object.keys(node.files || {}).sort();
+    var entries = [];
+    dirs.forEach(function (n) { entries.push({ n: n, d: true }); });
+    files.forEach(function (n) { entries.push({ n: n, d: false }); });
+    entries.forEach(function (e, i) {
+      var last = i === entries.length - 1;
+      out.push(prefix + (last ? "└── " : "├── ") + e.n + (e.d ? "/" : ""));
+      if (e.d) treeRec(node.dirs[e.n], prefix + (last ? "    " : "│   "), out);
+    });
+  }
+  commands.tree = {
+    help: "Display the directory tree",
+    usage: "tree [path]",
+    fn: function (args) {
+      var target = args[0] ? expandPath(args[0]) : cwd;
+      var e = resolveEntry(target);
+      if (e.node == null || e.type !== "dir") { print("tree: no such directory", "err"); return; }
+      print(pathDisplay(target), "accent");
+      var out = [];
+      treeRec(e.node, "", out);
+      out.forEach(function (l) { print(l); });
+    }
+  };
+
+  /* ---------------- clear / cls ---------------- */
+  function clearScreen() { outputEl.innerHTML = ""; }
+  commands.clear = { help: "Clear the terminal screen", usage: "clear", fn: clearScreen };
+  commands.cls = { help: "Clear the terminal screen", usage: "cls", fn: clearScreen, hidden: true };
+
+  /* ---------------- history ---------------- */
+  commands.history = {
+    help: "Show command history",
+    usage: "history [n]",
+    fn: function (args) {
+      var n = args.length ? parseInt(args[0], 10) : history.length;
+      if (isNaN(n) || n < 0) n = history.length;
+      var start = Math.max(0, history.length - n);
+      for (var i = start; i < history.length; i++) {
+        print(pad(i + 1, 3) + "  " + history[i]);
+      }
+    }
+  };
+
+  /* ---------------- neofetch / sysinfo ---------------- */
+  function hostPlatform() {
+    var ua = navigator.userAgent || "";
+    if (/Windows/i.test(ua)) return "Windows";
+    if (/Mac OS X|Macintosh/i.test(ua)) return "macOS";
+    if (/Android/i.test(ua)) return "Android";
+    if (/iPhone|iPad|iPod/i.test(ua)) return "iOS";
+    if (/Linux/i.test(ua)) return "Linux";
+    return "Unknown";
+  }
+  commands.neofetch = {
+    help: "Display system information (aliases: sysinfo, fetch)",
+    usage: "neofetch",
+    fn: function () {
+      var d = now();
+      var logo = [
+        "        .--.",
+        "       |o_o |",
+        "       |:_/ |",
+        "      //   \\ \\",
+        "     (|     | )",
+        "    /'\\_   _/`\\",
+        "    \\___)=(___/"
+      ];
+      var info = [
+        USER + "@" + HOST,
+        "----------------",
+        "OS:      WebTerminal 1.0 (browser)",
+        "Host:    " + hostPlatform(),
+        "Kernel:  " + (navigator.userAgent.match(/Chrome\/[\d.]+|Firefox\/[\d.]+|Safari\/[\d.]+/i) || ["JS v1.0"])[0],
+        "Shell:   web-sh",
+        "Uptime:  " + Math.floor(performance.now() / 1000) + "s",
+        "Theme:   " + currentTheme,
+        "FS:      simulated " + countFs() + " files",
+        "Memory:  " + Math.round((navigator.deviceMemory || 8)) + " GiB (simulated)",
+        "CPU:     " + (navigator.hardwareConcurrency || 4) + " threads",
+        "Date:    " + dateStr(d) + " " + timeStr(d)
+      ];
+      var maxLeft = 0;
+      logo.forEach(function (l) { if (l.length > maxLeft) maxLeft = l.length; });
+      var n = Math.max(logo.length, info.length);
+      for (var i = 0; i < n; i++) {
+        var left = logo[i] || "";
+        var right = info[i] || "";
+        var gap = " ".repeat(maxLeft - left.length + 3);
+        print(left + gap + right, i === 0 ? "title" : "");
+      }
+    }
+  };
+  commands.sysinfo = { help: "Display system information", usage: "sysinfo", fn: commands.neofetch.fn, hidden: true };
+  commands.fetch  = { help: "Alias of neofetch", usage: "fetch", fn: commands.neofetch.fn, hidden: true };
+
+  function countFs() {
+    var count = 0;
+    (function walk(node) {
+      count += Object.keys(node.files || {}).length;
+      Object.keys(node.dirs || {}).forEach(function (k) { walk(node.dirs[k]); });
+    })(fs);
+    return count;
+  }
+
+  /* ---------------- sudo ---------------- */
+  var sudoCount = 0;
+  commands.sudo = {
+    help: "Execute a command with superuser privileges (or not)",
+    usage: "sudo [command]",
+    fn: function (args, stdin) {
+      sudoCount++;
+      var jokes = [
+        USER + " is not in the sudoers file. This incident will be reported.",
+        "Permission denied (are you root? probably not).",
+        "Nice try. The real root is the friends we made along the way.",
+        "sudo: unable to resolve host: has-been",
+        "You have " + (3 - Math.min(3, sudoCount)) + " attempts remaining before the terminal self-destructs.",
+        "sudo: a wild administrator appeared and confiscated your command."
+      ];
+      if (sudoCount % 5 === 0) {
+        print("You are now root. (not really)", "ok");
+      } else {
+        print("sudo: " + jokes[sudoCount % jokes.length], "warn");
+      }
+      if (args.length && args[0] !== "sudo") {
+        print("Running as root: " + args.join(" "), "dim");
+        runCommandText(args.join(" "), stdin);
+      }
+    }
+  };
+
+  /* ---------------- exit ---------------- */
+  commands.exit = {
+    help: "Leave the terminal",
+    usage: "exit",
+    fn: function () {
+      print("logout", "dim");
+      print("Connection to " + HOST + " closed.", "dim");
+      setTimeout(function () { location.reload(); }, 1200);
+    }
+  };
+  commands.quit = { help: "Alias of exit", usage: "quit", fn: commands.exit.fn, hidden: true };
+
+  /* ---------------- yes ---------------- */
+  commands.yes = {
+    help: "Repeatedly output a line (capped to protect the terminal)",
+    usage: "yes [string]",
+    fn: function (args) {
+      var out = args.length ? args.join(" ") : "y";
+      var limit = 100;
+      for (var i = 0; i < limit; i++) print(out);
+      print("(yes: stopped after " + limit + " lines)", "dim");
+    }
+  };
+
+  /* ---------------- seq ---------------- */
+  commands.seq = {
+    help: "Print a sequence of numbers",
+    usage: "seq [FIRST [INC]] LAST",
+    fn: function (args) {
+      var nums = args.map(function (a) { return parseFloat(a); });
+      if (nums.some(function (n) { return isNaN(n); })) {
+        print("seq: invalid number", "err");
+        return;
+      }
+      var first, inc, last;
+      if (nums.length === 1) { first = 1; inc = 1; last = nums[0]; }
+      else if (nums.length === 2) { first = nums[0]; inc = first <= nums[1] ? 1 : -1; last = nums[1]; }
+      else if (nums.length >= 3) { first = nums[0]; inc = nums[1]; last = nums[2]; }
+      else { print("usage: seq [FIRST [INC]] LAST", "warn"); return; }
+      if (inc === 0) { print("seq: zero increment", "err"); return; }
+      if (first > last && inc > 0) return;
+      if (first < last && inc < 0) return;
+      var guard = 0;
+      for (var v = first; (inc > 0 ? v <= last : v >= last) && guard < 100000; v += inc, guard++) {
+        print(String(v));
+      }
+    }
+  };
+
+  /* ---------------- time ---------------- */
+  commands.time = {
+    help: "Time a command",
+    usage: "time <command>",
+    fn: function (args) {
+      if (!args.length) { print("usage: time <command>", "warn"); return; }
+      var start = Date.now();
+      runCommandText(args.join(" "));
+      print("real\t" + (Date.now() - start) + "ms", "dim");
+    }
+  };
+
+  /* ---------------- sleep ---------------- */
+  commands.sleep = {
+    help: "Delay for a number of seconds",
+    usage: "sleep <seconds>",
+    fn: function (args) {
+      var secs = parseFloat(args[0]);
+      if (isNaN(secs) || secs < 0) { print("sleep: invalid time interval", "err"); return; }
+      var end = Date.now() + Math.round(secs * 1000);
+      while (Date.now() < end) { /* busy-wait: the terminal is busy while sleeping */ }
+    }
+  };
+
+  /* ---------------- watch ---------------- */
+  commands.watch = {
+    help: "Execute a command periodically",
+    usage: "watch [-n <seconds>] <command>",
+    fn: function (args) {
+      var interval = 1, cmd = [];
+      if (args[0] === "-n" && args.length >= 2) {
+        interval = parseFloat(args[1]);
+        if (isNaN(interval) || interval <= 0) { print("watch: invalid interval", "err"); return; }
+        cmd = args.slice(2);
+      } else {
+        cmd = args;
+      }
+      if (!cmd.length) { print("usage: watch [-n <seconds>] <command>", "warn"); return; }
+      var runs = 6, line = cmd.join(" ");
+      var i = 0;
+      (function tick() {
+        print("--- " + line + " (run " + (i + 1) + "/" + runs + ") ---", "dim");
+        runCommandText(line);
+        i++;
+        if (i < runs) setTimeout(tick, Math.max(100, interval * 1000));
+        else print("(watch: stopped after " + runs + " runs)", "dim");
+      })();
+    }
+  };
+
+  /* ---------------- xargs ---------------- */
+  commands.xargs = {
+    help: "Build and execute command lines from standard input",
+    usage: "xargs [-n <max-args>] [command]",
+    fn: function (args, stdin) {
+      var maxArgs = 0;
+      if (args[0] === "-n" && args.length >= 2) {
+        maxArgs = parseInt(args[1], 10);
+        if (isNaN(maxArgs) || maxArgs <= 0) { print("xargs: invalid -n value", "err"); return; }
+        args = args.slice(2);
+      }
+      var cmdArgs = args.length ? args : ["echo"];
+      var items = String(stdin || "").split(/\s+/).filter(Boolean);
+      if (!items.length) return;
+      var batches = [];
+      if (maxArgs) {
+        for (var i = 0; i < items.length; i += maxArgs) batches.push(items.slice(i, i + maxArgs));
+      } else {
+        batches.push(items);
+      }
+      batches.forEach(function (batch) {
+        var line = cmdArgs.map(quoteArg).join(" ") + " " + batch.map(quoteArg).join(" ");
+        runCommandText(line);
+      });
+    }
+  };
+  function quoteArg(s) {
+    return /^[A-Za-z0-9_\/\.\-=+]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
+  }
+
+  /* ---------------- calc ---------------- */
+  commands.calc = {
+    help: "Evaluate a math expression (e.g. calc 5*(3+2)^2)",
+    usage: "calc <expression>",
+    fn: function (args) {
+      if (!args.length) { print("usage: calc <expression>", "warn"); return; }
+      var expr = args.join(" ");
+      try {
+        var r = calcParse(expr);
+        print(expr + " = " + r, "ok");
+      } catch (e) {
+        print("calc: " + e.message, "err");
+      }
+    }
+  };
+
+  /* ---------------- ascii art gallery ---------------- */
+  var asciiArts = {
+    logo: [
+      "   ____        _     _           ",
+      "  |  _ \\   ___| |__ (_)_ __ ___ ",
+      "  | |_) | / _ \\ '_ \\| | '_ ` _ \\",
+      "  |  _ < |  __/ |_) | | | | | | |",
+      "  |_| \\_\\ \\___|_.__/|_|_| |_| |_|",
+      "                 WebTerminal 1.0 "
+    ],
+    dragon: [
+      "            __====-_  _-====___",
+      "      _--^^^#####//      \\\\#####^^^--_",
+      "   _-^##########// (    ) \\\\##########^-_",
+      "  -############//  |\\^^/|  \\\\############-",
+      " _##############/   (@::@)   \\############_",
+      " ##############/     \\\\@@//     \\##############",
+      " -##############      \\\\/       ##############-",
+      "  -_#################################_-",
+      "    ^-################################-^",
+      "       \\\\################################//",
+      "           \\\\########################//",
+      "               \\\\################//",
+      "                   \\\\########//",
+      "                      \\\\####//"
+    ],
+    tux: [
+      "   .--.",
+      "  |o_o |",
+      "  |:_/ |",
+      " //   \\ \\",
+      "(|     | )",
+      "/'\\_   _/`\\",
+      "\\___)=(___/"
+    ],
+    cat: [
+      " /\\_/\\",
+      "( o.o )",
+      " > ^ <"
+    ],
+    tree: [
+      "      ^      ",
+      "     ^^^     ",
+      "    ^^^^^    ",
+      "   ^^^^^^^   ",
+      "  ^^^^^^^^^  ",
+      " ^^^^^^^^^^^ ",
+      "     |||     ",
+      "     |||     "
+    ],
+    matrix: [
+      "..\\....\\.../....",
+      "..\\\\...\\..//....",
+      "...\\\\..\\\\.//....",
+      "....\\\\..//.....",
+      ".....\\\\//......",
+      "......//\\\\......",
+      ".....//..\\\\.....",
+      "....//....\\\\....",
+      "..//......\\\\...."
+    ]
+  };
+  commands.ascii = {
+    help: "Display ASCII art (ascii [list|name])",
+    usage: "ascii [list|name]",
+    fn: function (args) {
+      if (!args.length || args[0] === "list") {
+        print("Available art: " + Object.keys(asciiArts).join(", "), "accent");
+        return;
+      }
+      var art = asciiArts[args[0]];
+      if (!art) {
+        print("ascii: unknown art '" + args[0] + "'. Try 'ascii list'.", "warn");
+        return;
+      }
+      art.forEach(function (l) { print(l); });
+    }
+  };
+
+  /* ---------------- weather ---------------- */
+  var weatherSeed = 0;
+  function weatherFallback(city) {
+    var conds = ["☀️ Sunny", "⛅ Partly cloudy", "🌧️ Rainy", "🌩️ Thunderstorms", "❄️ Snow", "🌤️ Clear"];
+    var temp = 8 + Math.abs(Math.sin(weatherSeed++ * 1.7) * 24);
+    print("Weather report for " + city + ":", "title");
+    print("──────────────────────────────────────");
+    print("Condition:  " + conds[weatherSeed % 6]);
+    print("Temperature: " + temp.toFixed(1) + "°C");
+    print("Feels like:  " + (temp - 2.4).toFixed(1) + "°C");
+    print("Humidity:    " + (40 + Math.floor(Math.random() * 50)) + "%");
+    print("Wind:        " + (3 + Math.floor(Math.random() * 20)) + " km/h");
+    print("──────────────────────────────────────");
+    print("Source: offline fallback (wttr.in unreachable)", "warn");
+  }
+  commands.weather = {
+    help: "Show a live weather forecast (wttr.in) with offline fallback",
+    usage: "weather [city]",
+    fn: function (args) {
+      var city = args.join(" ") || "London";
+      print("Fetching live forecast for " + city + "...", "dim");
+      if (typeof fetch !== "function") { weatherFallback(city); return; }
+      var url = "https://wttr.in/" + encodeURIComponent(city) + "?format=j1&lang=en";
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 8000);
+      fetch(url, { signal: ctrl.signal })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          clearTimeout(timer);
+          var cur = d.current_condition && d.current_condition[0];
+          var days = d.weather || [];
+          if (!cur) throw new Error("empty payload");
+          var wd = cur.weatherDesc && cur.weatherDesc[0] ? cur.weatherDesc[0].value : "Unknown";
+          print("Weather report for " + city + " (live):", "title");
+          print("──────────────────────────────────────");
+          print("Now:        " + wd + ", " + cur.temp_C + "°C (feels " + cur.FeelsLikeC + "°C)");
+          print("Humidity:   " + cur.humidity + "%");
+          print("Wind:       " + cur.windspeedKmph + " km/h " + cur.winddir16Point);
+          print("Pressure:   " + cur.pressure + " hPa");
+          print("Observed:   " + cur.observation_time + " UTC");
+          print("──────────────────────────────────────");
+          var dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          days.slice(0, 3).forEach(function (day) {
+            var dp = String(day.date).split("-");               // "YYYY-MM-DD" → local date
+            var d = new Date(+dp[0], (+dp[1] || 1) - 1, +dp[2] || 1);
+            var label = dow[d.getDay()] + " " + d.getDate() + " " + dateStr(d).split(" ")[1];
+            var h = day.hourly && day.hourly[0];
+            var desc = h && h.weatherDesc && h.weatherDesc[0] ? h.weatherDesc[0].value : "n/a";
+            print("  " + label + "   " + day.mintempC + "–" + day.maxtempC + "°C   " + desc);
+          });
+          print("──────────────────────────────────────");
+          print("Source: wttr.in", "dim");
+        })
+        .catch(function (e) {
+          clearTimeout(timer);
+          print("weather: live fetch failed (" + e.message + ")", "warn");
+          weatherFallback(city);
+        });
+    }
+  };
+
+  /* ---------------- fortune ---------------- */
+  var fortunes = [
+    "A journey of a thousand miles begins with a single 'cd'.",
+    "The best way to predict the future is to type it.",
+    "Segmentation fault: it's not you, it's me.",
+    "There is no place like ~",
+    "rm -rf * is the most honest command ever written.",
+    "A programmer is a machine that turns caffeine into code.",
+    "sudo make me a sandwich.",
+    "It works on my machine.",
+    "Your terminal misses you when you close it.",
+    "42 — that's always the answer.",
+    "Real programmers don't comment their code. It was hard to write, it should be hard to understand.",
+    "On the internet, nobody knows you're a script.",
+    "I would tell you a UDP joke, but you might not get it.",
+    "There are only 10 types of people: those who understand binary and those who don't."
+  ];
+  commands.fortune = {
+    help: "Print a random fortune",
+    usage: "fortune",
+    fn: function () {
+      print(fortunes[Math.floor(Math.random() * fortunes.length)], "accent");
+    }
+  };
+
+  /* ---------------- cowsay ---------------- */
+  commands.cowsay = {
+    help: "Make a cow say something",
+    usage: "cowsay [message]",
+    fn: function (args) {
+      var msg = args.length ? args.join(" ") : "moo";
+      print(cowsayArt(msg));
+    }
+  };
+  function cowsayArt(msg) {
+    var lines = String(msg).split("\n");
+    var width = Math.max.apply(null, lines.map(function (l) { return l.length; }));
+    var out = [];
+    out.push(" " + "_".repeat(width + 2));
+    lines.forEach(function (l, i) {
+      var padLen = width - l.length;
+      if (lines.length === 1) out.push("< " + l + " >");
+      else out.push((i === 0 ? "/ " : i === lines.length - 1 ? "\\ " : "| ") + l + " ".repeat(padLen) + (i === 0 ? " \\" : i === lines.length - 1 ? " /" : " |"));
+    });
+    out.push(" " + "-".repeat(width + 2));
+    out.push("        \\   ^__^");
+    out.push("         \\  (oo)\\_______");
+    out.push("            (__)\\       )\\/\\");
+    out.push("                ||----w |");
+    out.push("                ||     ||");
+    return out.join("\n");
+  }
+
+  /* ---------------- ping ---------------- */
+  /* Real-ish ping: the browser can't send ICMP, but it CAN measure the
+     round-trip time to a host by loading a resource from it (an <img>
+     load works cross-origin without needing CORS headers). On failure
+     it falls back to a simulated trace. */
+  function pingOnce(host, done) {
+    var t0 = performance.now();
+    var img = new Image();
+    var timer = setTimeout(function () { img.src = ""; done({ status: "timeout" }); }, 4000);
+    img.onload = img.onerror = function () {
+      clearTimeout(timer);
+      done({ status: "ok", rtt: performance.now() - t0 });
+    };
+    img.src = "https://" + host + "/favicon.ico?cb=" + Date.now() + "_" + Math.random().toString(16).slice(2);
+  }
+  commands.ping = {
+    help: "Measure round-trip time to a host (real HTTP probe, falls back to simulated)",
+    usage: "ping [-c count] [host]",
+    fn: function (args) {
+      var count = 4, hostArg = "1.1.1.1";
+      for (var i = 0; i < args.length; i++) {
+        if (args[i] === "-c" && args[i + 1]) { count = parseInt(args[i + 1], 10) || 4; i++; }
+        else if (args[i].charAt(0) !== "-") hostArg = args[i];
+      }
+      var host = String(hostArg).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      if (!/^[a-zA-Z0-9.\-:]+$/.test(host)) { print("ping: invalid host '" + hostArg + "'", "err"); return; }
+      if (typeof Image !== "function") { print("ping: Image API unavailable in this environment", "err"); return; }
+      print("PING " + host + " (56 bytes of data):", "dim");
+      var sent = 0, received = 0, times = [];
+      (function next() {
+        if (sent >= count) {
+          var min = Math.min.apply(null, times), max = Math.max.apply(null, times),
+              avg = times.reduce(function (a, b) { return a + b; }, 0) / (times.length || 1);
+          print("--- " + host + " ping statistics ---", "dim");
+          print(count + " packets transmitted, " + received + " received, " + Math.round(100 * (count - received) / count) + "% packet loss");
+          if (times.length) print("rtt min/avg/max = " + min.toFixed(1) + "/" + avg.toFixed(1) + "/" + max.toFixed(1) + " ms", "ok");
+          return;
+        }
+        sent++;
+        pingOnce(host, function (res) {
+          if (res.status === "ok") {
+            received++; times.push(res.rtt);
+            print("64 bytes from " + host + ": icmp_seq=" + sent + " ttl=56 time=" + res.rtt.toFixed(1) + " ms");
+          } else {
+            print("Request timeout for icmp_seq " + sent, "warn");
+          }
+          setTimeout(next, 150);
+        });
+      })();
+    }
+  };
+
+  /* ---------------- internet utilities ---------------- */
+  /* Fetch with CORS-bypass fallback via a public proxy. */
+  var proxyNoteShown = false;
+  function netFetch(url, timeout) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, timeout || 12000);
+    function clean() { clearTimeout(timer); }
+    return fetch(url, { signal: ctrl.signal }).then(function (r) { clean(); return r; }, function () {
+      var proxy = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
+      if (!proxyNoteShown) {
+        proxyNoteShown = true;
+        print("net: direct fetch blocked by CORS — routed via third-party proxy (api.allorigins.win). Your request leaves the browser.", "warn");
+      }
+      return fetch(proxy, { signal: ctrl.signal }).then(function (r) { clean(); return r; }, function (e2) {
+        clean(); throw e2;
+      });
+    });
+  }
+  function saveTextToFile(path, body, cmd) {
+    var target = expandPath(path);
+    var parent = resolveDir(target.slice(0, -1));
+    var fname = target[target.length - 1];
+    if (!parent.node || !fname) { print(cmd + ": cannot write to '" + path + "'", "err"); return; }
+    parent.node.files[fname] = body;
+    saveFs();
+    print("Saved " + pathDisplay(target) + " (" + body.length + " bytes)", "ok");
+  }
+
+  commands.curl = {
+    help: "Fetch a URL over the internet (curl [-o file] <url>)",
+    usage: "curl [-o file] <url>",
+    fn: function (args) {
+      var outFile = null, url = null;
+      for (var i = 0; i < args.length; i++) {
+        if (args[i] === "-o" || args[i] === "--output") { outFile = args[i + 1]; i++; }
+        else if (args[i].charAt(0) === "-") { /* ignore other flags */ }
+        else url = args[i];
+      }
+      if (!url) { print("usage: curl [-o file] <url>", "warn"); return; }
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      print("curl: fetching " + url + " ...", "dim");
+      netFetch(url).then(function (res) { return res.text(); })
+        .then(function (body) {
+          if (outFile) { saveTextToFile(outFile, body, "curl"); return; }
+          print("curl: " + url + " — " + body.length + " bytes", "dim");
+          print(body.length > 20000 ? body.slice(0, 20000) + "\n… (truncated)" : body);
+        })
+        .catch(function (e) { print("curl: " + (e && e.message ? e.message : "request failed (blocked by CORS?)"), "err"); });
+    }
+  };
+
+  commands.wget = {
+    help: "Download a URL to a file (wget -O <file> <url>)",
+    usage: "wget -O <file> <url>",
+    fn: function (args) {
+      var outFile = null, url = null;
+      for (var i = 0; i < args.length; i++) {
+        if (args[i] === "-O" || args[i] === "-o") { outFile = args[i + 1]; i++; }
+        else if (args[i].charAt(0) === "-") { /* ignore */ }
+        else url = args[i];
+      }
+      if (!url || !outFile) { print("usage: wget -O <file> <url>", "warn"); return; }
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      print("wget: downloading " + url + " ...", "dim");
+      netFetch(url).then(function (res) { return res.text(); })
+        .then(function (body) { saveTextToFile(outFile, body, "wget"); })
+        .catch(function (e) { print("wget: " + (e && e.message ? e.message : "request failed"), "err"); });
+    }
+  };
+
+  commands.open = {
+    help: "Open a URL in a new browser tab",
+    usage: "open <url>",
+    fn: function (args) {
+      var url = args[0];
+      if (!url) { print("usage: open <url>", "warn"); return; }
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      try { window.open(url, "_blank"); print("Opening " + url + " ...", "ok"); }
+      catch (e) { print("open: " + e.message, "err"); }
+    }
+  };
+
+  commands.nslookup = {
+    help: "Resolve a hostname using DNS-over-HTTPS (Google)",
+    usage: "nslookup <host>",
+    fn: function (args) {
+      var host = args[0];
+      if (!host) { print("usage: nslookup <host>", "warn"); return; }
+      if (!/^[a-zA-Z0-9.\-]+$/.test(host)) { print("nslookup: invalid host '" + host + "'", "err"); return; }
+      print("Server: dns.google (8.8.8.8)", "dim");
+      fetch("https://dns.google/resolve?name=" + encodeURIComponent(host) + "&type=A")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.Status === 3 || !(d.Answer && d.Answer.length)) {
+            print("** server can't find " + host + ": NXDOMAIN", "err");
+            return;
+          }
+          (d.Answer || []).forEach(function (a) {
+            print(host + "\t" + (a.TTL || "") + "\tIN\t" + a.type + "\t" + a.data);
+          });
+          print("Non-authoritative answer:", "dim");
+        })
+        .catch(function (e) { print("nslookup: " + (e && e.message ? e.message : "request failed"), "err"); });
+    }
+  };
+
+  commands.ip = {
+    help: "Show your public IP address",
+    usage: "ip",
+    fn: function () {
+      fetch("https://api.ipify.org?format=json")
+        .then(function (r) { return r.json(); })
+        .then(function (d) { print("Public IP: " + (d.ip || "unknown"), "ok"); })
+        .catch(function (e) { print("ip: " + (e && e.message ? e.message : "request failed"), "err"); });
+    }
+  };
+  commands.myip = { help: "Alias of ip", usage: "myip", fn: commands.ip.fn, hidden: true };
+
+  /* ---------------- uname ---------------- */
+  commands.uname = {
+    help: "Print system information",
+    usage: "uname [-a]",
+    fn: function (args) {
+      if (args.indexOf("-a") >= 0) {
+        print(USER + " webterminal 1.0 browser javascript x86_64 WebTerminal/1.0");
+      } else {
+        print("WebTerminal");
+      }
+    }
+  };
+
+  /* =====================================================================
+   * Python — real CPython via Pyodide (WebAssembly).
+   * Pyodide is lazy-loaded from a CDN the first time `python` is used, so
+   * the terminal still works fully offline for everything else.
+   * =================================================================== */
+  var PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js";
+  var PY_MOUNT = "/mnt/webterm";   /* terminal filesystem mirrored into Python here */
+
+  function ensurePython(cb) {
+    if (window.pyodide) { cb(); return; }
+    if (pyodideLoading) { pyWaiters.push(cb); return; }
+    pyodideLoading = true;
+    print("python: loading Pyodide (CPython for the browser) from CDN...", "dim");
+    var s = document.createElement("script");
+    s.src = PYODIDE_URL;
+    s.onload = function () {
+      loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/" })
+        .then(function (py) {
+          window.pyodide = py;
+          py.setStdout({ batched: function (t) { print(t); } });
+          py.setStderr({ batched: function (t) { print(t, "err"); } });
+          print("python: CPython " + py.version + " ready.", "ok");
+          try {
+            pySetupMount();
+            print("python: terminal filesystem mounted at " + PY_MOUNT, "dim");
+          } catch (e) { print("python: filesystem interop unavailable: " + e.message, "warn"); }
+          pyodideLoading = false;
+          pyWaiters.forEach(function (w) { w(); });
+          pyWaiters = [];
+        })
+        .catch(function (e) { print("python: failed to load interpreter: " + (e && e.message ? e.message : "unknown error") + " — check your connection and try again.", "err"); pyodideLoading = false; pyWaiters = []; });
+    };
+    s.onerror = function () {
+      print("python: failed to load Pyodide (CDN unreachable — are you offline?) — try 'python' again when connected.", "err");
+      pyodideLoading = false;
+      pyWaiters = [];
+    };
+    if (document.head) document.head.appendChild(s);
+    else s.onerror();
+  }
+
+  function isPyNone(v) {
+    return v === null || v === undefined ||
+      (v && typeof v === "object" && v.constructor && v.constructor.name === "PyNone");
+  }
+  /* Python repr of any result, via Python itself */
+  function pyDisplay(v) {
+    if (isPyNone(v)) return null;
+    try {
+      window.pyodide.globals.set("_v", v);
+      return String(window.pyodide.runPython("repr(_v)"));
+    } catch (e) { return String(v); }
+  }
+
+  /* -------------------------------------------------------------------
+   * Filesystem interop: the terminal's simulated tree is mirrored into
+   * Pyodide's virtual FS at PY_MOUNT. Every Python run syncs in the
+   * current terminal tree first, and mirrors Python's changes back after,
+   * so `open()` in Python and `cat`/`nano` in the terminal share files.
+   * ----------------------------------------------------------------- */
+  function pyRmRecursive(p) {
+    var py = window.pyodide, FS = py.FS, entries;
+    try { entries = FS.readdir(p); } catch (e) { return; }
+    entries.forEach(function (name) {
+      if (name === "." || name === "..") return;
+      var full = p + "/" + name, st;
+      try { st = FS.stat(full); } catch (e) { return; }
+      if (FS.isDir(st.mode)) pyRmRecursive(full);
+      try { FS.unlink(full); } catch (e) { try { FS.rmdir(full); } catch (e2) {} }
+    });
+  }
+
+  function writePyNode(node, pypath) {
+    var py = window.pyodide, FS = py.FS;
+    try { FS.mkdir(pypath); } catch (e) {}
+    Object.keys(node.dirs || {}).forEach(function (name) {
+      writePyNode(node.dirs[name], pypath + "/" + name);
+    });
+    Object.keys(node.files || {}).forEach(function (name) {
+      var p = pypath + "/" + name;
+      try { FS.unlink(p); } catch (e) {}
+      try { FS.writeFile(p, node.files[name]); } catch (e) {
+        print("python: fs write " + p + ": " + e.message, "warn");
+      }
+    });
+  }
+
+  function readPyNode(node, pypath) {
+    var py = window.pyodide, FS = py.FS, entries;
+    try { entries = FS.readdir(pypath); } catch (e) { return node; }
+    entries.forEach(function (name) {
+      if (name === "." || name === "..") return;
+      var p = pypath + "/" + name, st;
+      try { st = FS.stat(p); } catch (e) { return; }
+      if (FS.isDir(st.mode)) {
+        node.dirs[name] = readPyNode({ dirs: {}, files: {} }, p);
+      } else {
+        try { node.files[name] = FS.readFile(p, { encoding: "utf8" }); } catch (e) {}
+      }
+    });
+    return node;
+  }
+
+  /* Copy the live terminal tree into Pyodide (clean mirror each time) */
+  function pySyncToPy() {
+    var py = window.pyodide;
+    if (!py || !py.FS) return;
+    pyRmRecursive(PY_MOUNT);
+    writePyNode(fs, PY_MOUNT);
+  }
+
+  /* Mirror Pyodide's tree back into the terminal fs and persist it */
+  function pySyncFromPy() {
+    var py = window.pyodide;
+    if (!py || !py.FS) return;
+    var fresh = readPyNode({ dirs: {}, files: {} }, PY_MOUNT);
+    fs.dirs = fresh.dirs;
+    fs.files = fresh.files;
+    saveFs();
+  }
+
+  function pySetupMount() {
+    var py = window.pyodide, FS = py.FS;
+    try { FS.mkdir("/mnt"); } catch (e) {}
+    try { FS.mkdir(PY_MOUNT); } catch (e) {}
+    pySyncToPy();
+    var home = PY_MOUNT + "/home/user";
+    try { FS.chdir(home); } catch (e) { try { FS.chdir(PY_MOUNT); } catch (e2) {} }
+  }
+
+  function runPythonCode(code, label, showResult) {
+    try { pySyncToPy(); } catch (e) { print("python: fs sync (in): " + e.message, "warn"); }
+    try {
+      var result = window.pyodide.runPython(code);
+      if (showResult) {
+        var disp = pyDisplay(result);
+        if (disp !== null) print(disp);
+      }
+    } catch (e) {
+      print(String(e && e.message ? e.message : e), "err");
+    }
+    try { pySyncFromPy(); } catch (e) { print("python: fs sync (out): " + e.message, "warn"); }
+  }
+
+  /* Is the multi-line Python buffer complete, or should we continue? */
+  function pyIsComplete(code) {
+    try {
+      window.pyodide.runPython("compile(" + JSON.stringify(code) + ", '<stdin>', 'exec')");
+      return true;
+    } catch (e) {
+      var m = String(e && e.message ? e.message : e);
+      return !/unexpected EOF|incomplete input/i.test(m);
+    }
+  }
+
+  function setReplPrompt() {
+    if (replActive) {
+      promptSpan.textContent = pyRepl && pyRepl.lines.length ? "..." : ">>>";
+      cwdHintEl.style.display = "none";
+    } else {
+      promptSpan.textContent = "$";
+      cwdHintEl.style.display = "";
+    }
+  }
+
+  function exitPythonRepl() {
+    replActive = false;
+    pyRepl = null;
+    setReplPrompt();
+    print("exit", "dim");
+    inputEl.focus();
+  }
+
+  function handlePythonLine(line) {
+    history.push(line);
+    historyIndex = 0;
+    historyDraft = "";
+    if (pyRepl.lines.length === 0 && /^(exit|quit)\(\)\s*$/.test(line.trim())) {
+      exitPythonRepl();
+      return;
+    }
+    var prefix = pyRepl.lines.length ? "..." : ">>>";
+    pyRepl.lines.push(line);
+    print(prefix + " " + line, "prompt");
+    var code = pyRepl.lines.join("\n");
+    if (pyIsComplete(code)) {
+      pyRepl.lines = [];
+      setReplPrompt();
+      runPythonCode(code, "<stdin>", true);
+    } else {
+      setReplPrompt();
+    }
+    inputEl.value = "";
+  }
+
+  commands.python = {
+    help: "Run Python: python <file> | python -c \"code\" | python (REPL)",
+    usage: "python [file|-c code]",
+    fn: function (args) {
+      if (replActive) return;
+      if (!args.length) {
+        ensurePython(function () {
+          replActive = true;
+          pyRepl = { lines: [] };
+          print("Python " + window.pyodide.version + " — type exit() or press Ctrl+D to quit.", "ok");
+          print("Files from the terminal live under " + PY_MOUNT + "/home/user — create/edit files there and cat them in the terminal.", "dim");
+          setReplPrompt();
+          inputEl.focus();
+        });
+        return;
+      }
+      if (args[0] === "-c") {
+        var code = args.slice(1).join(" ");
+        if (!code) { print("usage: python -c <code>", "warn"); return; }
+        ensurePython(function () { runPythonCode(code, "<inline>", false); });
+        return;
+      }
+      var target = expandPath(args[0]);
+      var e = resolveEntry(target);
+      if (e.node == null || e.type !== "file") { print("python: " + args[0] + ": No such file or directory", "err"); return; }
+      ensurePython(function () { runPythonCode(e.node, args[0], false); });
+    }
+  };
+
+  /* ---------------- matrix (toggle rain) ---------------- */
+  commands.matrix = {
+    help: "Toggle the Matrix rain effect (also: matrix on|off)",
+    usage: "matrix [on|off|status]",
+    fn: function (args) {
+      var want = args[0];
+      if (want === "on" || (want === undefined && !matrixRunning)) setMatrix(true);
+      else if (want === "off" || (want === undefined && matrixRunning)) setMatrix(false);
+      else if (want === "status") print(matrixRunning ? "matrix: on" : "matrix: off");
+      else print("matrix: usage: matrix [on|off|status]", "err");
+    }
+  };
+
+  /* ---------------- theme ---------------- */
+  var themeAliases = { vs: "vs", dark: "vs", green: "green", amber: "amber", crt: "amber", cyber: "cyberpunk", cyberpunk: "cyberpunk", catppuccin: "catppuccin", mocha: "catppuccin", ctp: "catppuccin" };
+  commands.theme = {
+    help: "Change color theme: vs | green | amber | cyberpunk | catppuccin",
+    usage: "theme [name]",
+    fn: function (args) {
+      if (!args.length) {
+        print("Themes: vs, green, amber, cyberpunk, catppuccin  (current: " + currentTheme + ")");
+        return;
+      }
+      var t = themeAliases[args[0].toLowerCase()];
+      if (!t) { print("theme: unknown theme '" + args[0] + "'", "err"); return; }
+      applyTheme(t);
+      print("Theme set to " + t, "ok");
+    }
+  };
+
+  /* ---------------- font ---------------- */
+  commands.font = {
+    help: "Set font size (e.g. font 16)",
+    usage: "font <px>",
+    fn: function (args) {
+      if (!args.length) {
+        print("Current font size: " + currentFont + "px");
+        return;
+      }
+      var s = parseInt(args[0], 10);
+      if (isNaN(s) || s < 8 || s > 32) { print("font: size must be 8–32px", "err"); return; }
+      applyFont(s);
+      print("Font size set to " + s + "px", "ok");
+    }
+  };
+
+  /* ---------------- export / download ---------------- */
+  function downloadBlob(filename, content) {
+    var blob = new Blob([content], { type: "text/plain" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }
+  /* `export` is env vars only — the value is also written to ~/.bashrc so it
+     survives reboot. Use `download` to fetch files / the filesystem / history. */
+  commands.export = {
+    help: "Set an environment variable (persisted to ~/.bashrc)",
+    usage: "export NAME=value",
+    fn: function (args) {
+      if (!args.length) { print("usage: export NAME=value", "warn"); return; }
+      var names = [];
+      args.forEach(function (a) {
+        var m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(a);
+        if (!m) { print("export: '" + a + "': not a NAME=value pair", "err"); return; }
+        envVars[m[1]] = m[2];
+        bashExports[m[1]] = m[2];
+        names.push(m[1]);
+      });
+      if (!names.length) return;
+      writeBashrc();
+      print("exported " + names.join(", "), "ok");
+    }
+  };
+  commands.download = {
+    help: "Download a file, directory (as JSON), filesystem (--fs), or command history",
+    usage: "download [path | history | --fs]",
+    fn: function (args) {
+      if (args[0] === "history" && resolveEntry(expandPath("history")).node == null) {
+        var body = history.length
+          ? history.map(function (c, i) { return pad(i + 1, 3) + "  " + c; }).join("\n")
+          : "(no commands executed yet)";
+        var header = "WebTerminal 1.0 — session log\n" + "Generated: " + now().toString() + "\n\n";
+        downloadBlob("terminal-history.txt", header + body + "\n");
+        print("Downloaded command history (terminal-history.txt)", "ok");
+        return;
+      }
+      if (args[0] === "--fs" || args[0] === "--all") {
+        var dump = JSON.stringify(fs, null, 2);
+        downloadBlob("webterm-fs.json", dump);
+        print("Downloaded entire filesystem (webterm-fs.json, " + dump.length + " bytes)", "ok");
+        return;
+      }
+      if (args.length) {
+        var target = expandPath(args[0]);
+        var e = resolveEntry(target);
+        if (e.node == null) { print("download: '" + args[0] + "': No such file or directory", "err"); return; }
+        var fname = target[target.length - 1] || "file.txt";
+        if (e.type === "dir") {
+          var dump = JSON.stringify(e.node, null, 2);
+          downloadBlob(fname + ".json", dump);
+          print("Downloaded directory " + pathDisplay(target) + " as JSON (" + dump.length + " bytes)", "ok");
+          return;
+        }
+        downloadBlob(fname, e.node);
+        print("Downloaded " + pathDisplay(target) + " (" + e.node.length + " bytes)", "ok");
+        return;
+      }
+      print("usage: download [path | history | --fs]", "warn");
+    }
+  };
+
+  /* ---------------- env ---------------- */
+  commands.env = {
+    help: "Display or set environment variables",
+    usage: "env [NAME=value] [command]",
+    fn: function (args) {
+      if (!args.length) {
+        Object.keys(envVars).sort().forEach(function (k) { print(k + "=" + envVars[k]); });
+        return;
+      }
+      var set = {}, cmd = null;
+      args.forEach(function (a) {
+        var eq = a.indexOf("=");
+        if (cmd) { cmd.push(a); return; }
+        if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) set[a.slice(0, eq)] = a.slice(eq + 1);
+        else { cmd = [a]; }
+      });
+      if (!cmd) {
+        var had = false;
+        Object.keys(set).forEach(function (k) { envVars[k] = set[k]; had = true; });
+        if (had) {
+          var nSet = Object.keys(set).length;
+          print("Set " + nSet + " environment variable" + (nSet === 1 ? "" : "s") + ".", "ok");
+        }
+        return;
+      }
+      var before = {};
+      Object.keys(set).forEach(function (k) { before[k] = envVars[k]; envVars[k] = set[k]; });
+      runChainSegment(cmd.join(" "), null, false);
+      Object.keys(set).forEach(function (k) {
+        if (before[k] === undefined) delete envVars[k]; else envVars[k] = before[k];
+      });
+    }
+  };
+
+  /* ---------------- set ---------------- */
+  commands.set = {
+    help: "Set or unset shell options (e errexit, u nounset, x xtrace)",
+    usage: "set [-eux | +eux | -o <option> | +o <option>]",
+    fn: function (args) {
+      var OPTS = { e: "errexit", u: "nounset", x: "xtrace" };
+      if (!args.length) {
+        Object.keys(envOptions).forEach(function (k) {
+          print(k + "\t" + (envOptions[k] ? "on" : "off"));
+        });
+        return;
+      }
+      for (var i = 0; i < args.length; i++) {
+        var a = args[i];
+        var on = true, body = a;
+        if (a.charAt(0) === "+") { on = false; body = a.slice(1); }
+        else if (a.charAt(0) === "-") { on = true; body = a.slice(1); }
+        else { print("set: " + a + ": not a valid option", "err"); continue; }
+        if (body.charAt(0) === "o") {
+          var name = body.slice(1);
+          if (!name && i + 1 < args.length && args[i + 1].indexOf("-") !== 0) name = args[++i];
+          if (name in envOptions) envOptions[name] = on;
+          else if (name) print("set: " + name + ": invalid option name", "err");
+          else Object.keys(envOptions).forEach(function (k) { print(k + "\t" + (envOptions[k] ? "on" : "off")); });
+          continue;
+        }
+        body.split("").forEach(function (c) {
+          var name = OPTS[c];
+          if (name) envOptions[name] = on;
+          else print("set: -" + c + ": invalid option", "err");
+        });
+      }
+    }
+  };
+
+  /* ---------------- alias / unalias ---------------- */
+  commands.alias = {
+    help: "Create a command alias (persisted to ~/.bashrc)",
+    usage: "alias [name | name=value ...]",
+    fn: function (args) {
+      if (!args.length) {
+        Object.keys(aliases).forEach(function (k) { print("alias " + k + "=" + aliases[k]); });
+        if (!Object.keys(aliases).length) print("(no aliases defined)", "dim");
+        return;
+      }
+      var changed = false;
+      args.forEach(function (a) {
+        var eq = a.indexOf("=");
+        if (eq <= 0) {
+          if (aliases[a] !== undefined) print("alias " + a + "=" + aliases[a]);
+          else print("alias: " + a + ": not found", "err");
+          return;
+        }
+        var name = a.slice(0, eq);
+        if (!/^[A-Za-z0-9_.-]+$/.test(name)) { print("alias: invalid name: " + name, "err"); return; }
+        aliases[name] = a.slice(eq + 1);
+        changed = true;
+      });
+      if (changed) { writeBashrc(); print("Aliases saved to " + pathDisplay(bashrcPath()) + ".", "ok"); }
+    }
+  };
+  commands.unalias = {
+    help: "Remove a command alias",
+    usage: "unalias [-a] <name...>",
+    fn: function (args) {
+      if (args[0] === "-a") {
+        aliases = {};
+        writeBashrc();
+        print("Removed all aliases.", "ok");
+        return;
+      }
+      if (!args.length) { print("usage: unalias [-a] <name...>", "warn"); return; }
+      var changed = false;
+      args.forEach(function (a) {
+        if (aliases[a] === undefined) { print("unalias: " + a + ": not found", "err"); return; }
+        delete aliases[a];
+        changed = true;
+      });
+      if (changed) { writeBashrc(); print("Aliases saved to " + pathDisplay(bashrcPath()) + ".", "ok"); }
+    }
+  };
+
+  /* ---------------- reset ---------------- */
+  commands.reset = {
+    help: "Restore the file system to its defaults",
+    usage: "reset",
+    fn: function () {
+      fs = JSON.parse(JSON.stringify(fsInitial));
+      try { localStorage.removeItem(FS_KEY); } catch (e) {}
+      cwd = homePath();
+      updateCwdHint();
+      envVars = envDefaults();
+      envOptions = { errexit: false, nounset: false, xtrace: false };
+      aliases = {};
+      bashExports = {};
+      loadBashrc();
+      envVars.PWD = pathDisplay(homePath());
+      print("File system reset to defaults.", "ok");
+    }
+  };
+
+  /* ---------------- reboot ---------------- */
+  commands.reboot = {
+    help: "Reboot the system (boot screen; wipes files, keeps only ~/pers and ~/.bashrc)",
+    usage: "reboot",
+    fn: function () {
+      var home = fs.dirs.home && fs.dirs.home.dirs && fs.dirs.home.dirs.user;
+      var bashrc = null;
+      if (home && home.files && Object.prototype.hasOwnProperty.call(home.files, ".bashrc"))
+        bashrc = home.files[".bashrc"];
+      var pers = home && home.dirs && home.dirs.pers
+        ? JSON.parse(JSON.stringify(home.dirs.pers)) : null;
+      fs = JSON.parse(JSON.stringify(fsInitial));
+      var newHome = fs.dirs.home.dirs.user;
+      if (bashrc !== null) newHome.files[".bashrc"] = bashrc;
+      if (pers !== null) newHome.dirs.pers = pers;
+      saveFs();
+      envVars = envDefaults();
+      envOptions = { errexit: false, nounset: false, xtrace: false };
+      aliases = {};
+      bashExports = {};
+      loadBashrc();
+      envVars.PWD = pathDisplay(homePath());
+      cwd = homePath();
+      updateCwdHint();
+      clearScreen();
+      var total = (fs.dirs ? Object.keys(fs.dirs).length : 0) + (fs.files ? Object.keys(fs.files).length : 0);
+      var boot = [
+        "WebTerminal BIOS v1.0 — memory check OK (1024 KB)",
+        "Detecting drives... " + total + " top-level item(s) found.",
+        "Mounting filesystem... home/ mounted. Files wiped; ~/pers and ~/.bashrc kept.",
+        "Starting core services... OK",
+        "Ready."
+      ];
+      boot.forEach(function (l, i) {
+        setTimeout(function () { print(l, "dim"); }, i * 250);
+      });
+      setTimeout(function () { showBanner(false); }, boot.length * 250 + 150);
+    }
+  };
+
+  /* ---------------- banner ---------------- */
+  commands.banner = {
+    help: "Show the welcome banner",
+    usage: "banner",
+    fn: function () { showBanner(false); }
+  };
+
+  /* ---------------- about ---------------- */
+  commands.about = {
+    help: "About WebTerminal",
+    usage: "about",
+    fn: function () {
+      print("WebTerminal 1.0", "title");
+      print("A self-contained terminal emulator in a single HTML file.");
+      print("No dependencies. No hosting. Just vibes.", "dim");
+      print("Built with vanilla HTML, CSS and JavaScript.");
+    }
+  };
+
+  /* ---------------- easter eggs ---------------- */
+  commands.hack = {
+    help: "Initiate hyperdrive. (Do not press again.)",
+    usage: "hack",
+    hidden: true,
+    fn: function () {
+      print("ACCESS GRANTED. Hacking the mainframe...", "warn");
+      setTimeout(function () { print("[▓▓▓▓▓░░░░░] 42% — bypassing firewall...", "cyan"); }, 400);
+      setTimeout(function () { print("[▓▓▓▓▓▓▓▓░░] 78% — injecting code...", "cyan"); }, 900);
+      setTimeout(function () { print("[▓▓▓▓▓▓▓▓▓▓] 100% — mainframe compromised.", "ok"); print("You win. Go touch some grass.", "dim"); }, 1400);
+    }
+  };
+  commands["42"] = {
+    help: "The answer.",
+    usage: "42",
+    hidden: true,
+    fn: function () { print("The answer to life, the universe, and everything.", "accent"); }
+  };
+  commands.beep = {
+    help: "Beep.",
+    usage: "beep",
+    hidden: true,
+    fn: function () { print("BEEP. (no sound hardware detected)", "warn"); }
+  };
+  commands.impossible = {
+    help: "An impossible task.",
+    usage: "impossible",
+    hidden: true,
+    fn: function () { print("If this printed, it was possible after all.", "magenta"); }
+  };
+  commands.starwars = {
+    help: "A long time ago in a browser far, far away...",
+    usage: "starwars",
+    hidden: true,
+    fn: function () {
+      print("A LONG TIME AGO IN A BROWSER FAR, FAR AWAY...", "dim");
+      setTimeout(function () { print("EPISODE IV: A NEW HOPE", "accent"); }, 600);
+      setTimeout(function () { print("(The terminal scrolls text upward. Sadly, our budget was cut.)", "dim"); }, 1200);
+    }
+  };
+
+  /* =====================================================================
+   * nano & vim — minimal text editor simulations
+   * A single editor engine drives both. nano uses Ctrl chords, vim is
+   * modal (INSERT / NORMAL / command-line). Files are written straight
+   * back into the simulated filesystem.
+   * =================================================================== */
+  function openEditor(mode, args) {
+    var name = args[0];
+    if (!name) { print("usage: " + mode + " <file>", "warn"); return; }
+    var target = expandPath(name);
+    var parent = resolveDir(target.slice(0, -1));
+    var fname = target[target.length - 1];
+    if (!parent.node) { print(mode + ": no such directory", "err"); return; }
+    var content = parent.node.files[fname] || "";
+    editing = {
+      name: pathDisplay(target),
+      path: target,
+      fname: fname,
+      modified: false,
+      mode: mode,              // "nano" | "vim"
+      insert: mode === "vim",  // vim starts in insert mode
+      command: false,          // vim command-line open
+      pendingD: false          // vim "d" key held for dd
+    };
+    editorBuf.value = content;
+    editorBuf.readOnly = false;
+    editorBuf.classList.remove("readonly");
+    enterEditor();
+  }
+
+  commands.nano = {
+    help: "Edit a file with the nano-like editor (Ctrl+S save, Ctrl+X exit)",
+    usage: "nano <file>",
+    fn: function (args) { openEditor("nano", args); }
+  };
+
+  commands.vim = {
+    help: "Edit a file with a modal vim-like editor (i insert, Esc normal, :wq save+quit, :q! abandon)",
+    usage: "vim <file>",
+    fn: function (args) { openEditor("vim", args); }
+  };
+
+  commands.edit = {
+    help: "Edit a file with your default editor ($EDITOR — nano unless set to vim)",
+    usage: "edit <file>",
+    fn: function (args) { openEditor(envVars.EDITOR === "vim" ? "vim" : "nano", args); }
+  };
+
+  function saveFile() {
+    var parent = resolveDir(editing.path.slice(0, -1));
+    if (parent.node) parent.node.files[editing.fname] = editorBuf.value;
+    editing.modified = false;
+    saveFs();
+    if (editing.path.join("/") === "home/user/.bashrc") loadBashrc();
+    print("Saved " + editing.name, "ok");
+  }
+
+  function enterEditor() {
+    inputLineEl.style.display = "none";
+    editorStatus.classList.add("active");
+    editorOv.classList.add("active");
+    vimCmd.style.display = "none";
+    renderEditor();
+    editorBuf.focus();
+    print(editing.mode + ": editing " + editing.name +
+      (editing.mode === "vim" ? "  (i insert, Esc normal, :wq save+quit, :q! abandon)"
+                              : "  (Ctrl+S save, Ctrl+X exit)"), "dim");
+    scrollBottom();
+  }
+
+  function exitEditor(save) {
+    if (save && editing.modified) saveFile();
+    var modeName = editing.mode;
+    editing = null;
+    editorOv.classList.remove("active");
+    editorStatus.classList.remove("active");
+    vimCmd.style.display = "none";
+    editorBuf.value = "";
+    inputLineEl.style.display = "flex";
+    print(modeName + ": exited editor", "dim");
+    inputEl.focus();
+  }
+
+  function renderEditor() {
+    if (!editing) return;   // a deferred re-render may fire after exit
+    var lines = editorBuf.value.split("\n");
+    var nums = [];
+    for (var i = 0; i < lines.length; i++) nums.push(i + 1);
+    editorGut.textContent = nums.join("\n");
+    editorGut.scrollTop = editorBuf.scrollTop;
+    if (editing.mode === "vim") {
+      var mode = editing.command ? "-- COMMAND --"
+               : editing.insert  ? "-- INSERT --"
+               :                   "-- NORMAL --";
+      editorStatusText.textContent = mode + "  " + editing.name + (editing.modified ? "  [Modified]" : "");
+      vimCmd.style.display = editing.command ? "block" : "none";
+    } else {
+      editorStatusText.textContent = "GNU nano 6.0 — File: " + editing.name +
+        (editing.modified ? "  [Modified]" : "") +
+        "    ^G Help  ^O WriteOut  ^X Exit";
+      vimCmd.style.display = "none";
+    }
+  }
+
+  /* =====================================================================
+   * Matrix rain background
+   * =================================================================== */
+  var matrixCtx = matrixCanvas.getContext("2d");
+  var matrixDrops = [];
+  var matrixResizeBound = false;
+  function matrixResize() {
+    matrixCanvas.width = window.innerWidth;
+    matrixCanvas.height = window.innerHeight;
+    matrixDrops = [];
+    for (var x = 0; x < matrixCanvas.width / 14; x++) matrixDrops[x] = Math.floor(Math.random() * -matrixCanvas.height / 14);
+  }
+  function setMatrix(on) {
+    matrixRunning = on;
+    document.body.classList.toggle("matrix", on);
+    if (on) {
+      if (!matrixResizeBound) {
+        matrixResizeBound = true;
+        window.addEventListener("resize", matrixResize);
+      }
+      startMatrix();
+    } else if (matrixResizeBound) {
+      matrixResizeBound = false;
+      if (window.removeEventListener) window.removeEventListener("resize", matrixResize);
+    }
+    print("matrix: " + (on ? "on" : "off"));
+  }
+  function startMatrix() {
+    var chars = "アイウエオカキクケコサシスセソタチツテト0123456789ABCDEF";
+    var fontSize = 14;
+    matrixResize();
+    (function draw() {
+      if (!matrixRunning) { matrixCtx.clearRect(0, 0, matrixCanvas.width, matrixCanvas.height); return; }
+      matrixCtx.fillStyle = "rgba(0,0,0,0.05)";
+      matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+      matrixCtx.fillStyle = "#00ff41";
+      matrixCtx.font = fontSize + "px monospace";
+      for (var i = 0; i < matrixDrops.length; i++) {
+        var ch = chars[Math.floor(Math.random() * chars.length)];
+        matrixCtx.fillText(ch, i * fontSize, matrixDrops[i] * fontSize);
+        if (matrixDrops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) matrixDrops[i] = 0;
+        matrixDrops[i]++;
+      }
+      requestAnimationFrame(draw);
+    })();
+  }
+
+  /* =====================================================================
+   * Theme / font application
+   * =================================================================== */
+  var currentTheme = "vs";
+  var currentFont  = 14;
+  function setThemeSilent(t) {
+    document.body.setAttribute("data-theme", t);
+    currentTheme = t;
+    if (themeSelect) themeSelect.value = t;
+  }
+  function applyTheme(t) {
+    setThemeSilent(t);
+    broadcast("theme", t);
+  }
+  function setFontSilent(px) {
+    document.body.style.setProperty("--fs", px + "px");
+    currentFont = px;
+    if (fontSelect) fontSelect.value = String(px);
+  }
+  function applyFont(px) {
+    setFontSilent(px);
+    broadcast("font", px);
+  }
+
+  /* =====================================================================
+   * Welcome banner
+   * =================================================================== */
+  function showBanner(typed) {
+    var d = now();
+    var lines = [
+      "Welcome to WebTerminal v1.0",
+      "Type 'help' for available commands",
+      "═".repeat(46),
+      "Last login: " + dateStr(d) + " " + timeStr(d) + " from 127.0.0.1",
+      "User: " + USER + "@" + HOST,
+      "System: WebTerminal 1.0 (browser-based, vanilla JS)",
+      "─".repeat(46)
+    ];
+    if (typed) {
+      lines.forEach(function (l, i) { print(l, i === 0 ? "title" : i === 2 || i === 6 ? "dim" : ""); });
+    } else {
+      // gentle typewriter on first load
+      typewriteText(lines.join("\n"), "", 16, function () {});
+    }
+  }
+
+  /* =====================================================================
+   * Input handling
+   * =================================================================== */
+  inputEl.addEventListener("keydown", function (e) {
+    var key = e.key;
+
+    /* Ctrl+L → clear screen */
+    if (e.ctrlKey && key.toLowerCase() === "l") {
+      e.preventDefault();
+      clearScreen();
+      return;
+    }
+
+    /* Python REPL mode: Ctrl+D quits, Ctrl+C interrupts, Enter runs code */
+    if (replActive) {
+      if (e.ctrlKey && key.toLowerCase() === "d") {
+        e.preventDefault();
+        exitPythonRepl();
+        return;
+      }
+      if (e.ctrlKey && key.toLowerCase() === "c") {
+        e.preventDefault();
+        print("^C", "dim");
+        pyRepl.lines = [];
+        inputEl.value = "";
+        setReplPrompt();
+        return;
+      }
+      if (key === "Tab") { e.preventDefault(); return; }
+      if (key === "Enter") {
+        e.preventDefault();
+        handlePythonLine(inputEl.value);
+        return;
+      }
+      /* other keys (arrows, paste, editing) fall through to shared code */
+    }
+
+    /* Ctrl+C → interrupt */
+    if (e.ctrlKey && key.toLowerCase() === "c") {
+      e.preventDefault();
+      print("^C", "dim");
+      inputEl.value = "";
+      return;
+    }
+
+    /* Ctrl+V handled by browser paste (fine for us) */
+    if (e.ctrlKey && key.toLowerCase() === "v") return;
+
+    /* Tab → autocomplete */
+    if (key === "Tab") {
+      e.preventDefault();
+      autocomplete();
+      return;
+    }
+
+    /* ArrowUp / ArrowDown → history navigation */
+    if (key === "ArrowUp") {
+      e.preventDefault();
+      if (history.length === 0) return;
+      if (historyIndex === 0) historyDraft = inputEl.value;
+      if (historyIndex < history.length) historyIndex++;
+      inputEl.value = history[history.length - historyIndex];
+      moveCaretEnd();
+      return;
+    }
+    if (key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        historyIndex--;
+        inputEl.value = historyIndex === 0 ? historyDraft : history[history.length - historyIndex];
+        moveCaretEnd();
+      }
+      return;
+    }
+
+    /* Enter → execute */
+    if (key === "Enter") {
+      e.preventDefault();
+      runCommand(inputEl.value);
+      inputEl.value = "";      // clear the line once it has been sent
+      historyIndex = 0;
+      return;
+    }
+  });
+
+  function moveCaretEnd() {
+    var len = inputEl.value.length;
+    inputEl.setSelectionRange(len, len);
+  }
+
+  /* Tap anywhere to focus input — but NOT on the toolbar or its
+     controls, otherwise <select> dropdowns open and instantly close. */
+  document.addEventListener("click", function (e) {
+    if (editing) return;
+    var t = e.target;
+    if (t && (t.closest(".toolbar") || t.tagName === "SELECT" || t.tagName === "BUTTON")) return;
+    inputEl.focus();
+  });
+  inputLineEl.addEventListener("mousedown", function (e) { e.preventDefault(); inputEl.focus(); });
+
+  /* ---------------------------------------------------------------
+   * Command execution pipeline
+   * ------------------------------------------------------------- */
+  /* Tokenize a command string into args (quote-aware). */
+  /* Split a command line into args. Quotes may sit mid-word (alias x='a b').
+     Double-quoted and bare text get $VAR expansion; single-quoted text is literal. */
+  function splitArgsText(text) {
+    var args = [], buf = "", expandable = false, quoted = false, inQuote = null, i = 0, n = text.length;
+    function flush() {
+      if (buf !== "" || quoted) args.push(expandable ? expandVars(buf) : buf);
+      buf = ""; expandable = false; quoted = false;
+    }
+    while (i < n) {
+      var ch = text[i];
+      if (inQuote) {
+        if (ch === inQuote) inQuote = null;
+        else { buf += ch; if (inQuote === '"') expandable = true; }
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inQuote = ch; quoted = true; i++; continue; }
+      if (ch === " " || ch === "\t") { flush(); i++; continue; }
+      buf += ch;
+      expandable = true;
+      i++;
+    }
+    flush();
+    return args;
+  }
+
+  /* Split a raw line on top-level shell operators, honouring quotes:
+     && ; | > >> are returned as operator tokens, everything else as text. */
+  function shellTokenize(raw) {
+    var tokens = [], buf = "", i = 0, n = raw.length;
+    function flush() { var t = buf.trim(); buf = ""; if (t) tokens.push({ type: "text", value: t }); }
+    while (i < n) {
+      var ch = raw[i];
+      if (ch === '"' || ch === "'") {
+        var quote = ch, j = i + 1;
+        while (j < n && raw[j] !== quote) j++;
+        var end = (j < n) ? j + 1 : n;
+        buf += raw.slice(i, end);
+        i = end;
+        continue;
+      }
+      if (ch === "&" && raw[i + 1] === "&") { flush(); tokens.push({ type: "and" }); i += 2; continue; }
+      if (ch === "|") { flush(); tokens.push({ type: "pipe" }); i += 1; continue; }
+      if (ch === ";") { flush(); tokens.push({ type: "semi" }); i += 1; continue; }
+      if (ch === ">" && raw[i + 1] === ">") { flush(); tokens.push({ type: "append" }); i += 2; continue; }
+      if (ch === ">") { flush(); tokens.push({ type: "redir" }); i += 1; continue; }
+      buf += ch; i++;
+    }
+    flush();
+    return tokens;
+  }
+
+  function runChainSegment(text, stdinText, capture) {
+    var captured = null;
+    if (capture) outCapture = { lines: [] };
+    if (text) {
+      var args = resolveAliases(splitArgsText(text));
+      var cmdName = args.shift();
+      if (envOptions.xtrace) printDom("$ " + text, "dim");
+      var cmd = commands[cmdName];
+      if (cmd && cmd.fn) {
+        cmd.fn(args, stdinText);
+      } else {
+        print(cmdName + ": command not found", "err");
+        var sug = closestCommand(cmdName);
+        if (sug) print("Did you mean: " + sug + "?", "warn");
+      }
+    }
+    if (capture) { captured = outCapture ? outCapture.lines : []; outCapture = null; }
+    return captured;
+  }
+
+  /* Write captured stdout lines to a file (cmd > file) or append (cmd >> file). */
+  function writeRedirect(filePath, lines, append) {
+    var target = expandPath(filePath);
+    var parent = resolveDir(target.slice(0, -1));
+    var name = target[target.length - 1];
+    if (!parent.node || !name) { print((append ? ">>" : ">") + ": cannot write to '" + filePath + "'", "err"); return; }
+    if (parent.node.dirs && parent.node.dirs[name]) { print((append ? ">>" : ">") + ": " + name + ": Is a directory", "err"); return; }
+    var content = lines.join("\n");
+    if (content) content += "\n";
+    var prev = "";
+    if (append && parent.node.files && Object.prototype.hasOwnProperty.call(parent.node.files, name)) {
+      prev = parent.node.files[name];
+    }
+    parent.node.files[name] = prev + content;
+    saveFs();
+    print((append ? "Appended" : "Wrote") + " " + pathDisplay(target) + " (" + parent.node.files[name].length + " bytes)", "ok");
+  }
+
+  /* Execute a command line honoring shell operators; used by time/watch/xargs/
+     sudo. No echo/history side effects — the outer caller owns those. */
+  function runCommandText(text, stdinText) {
+    if (!runChain(text, true)) runChainSegment(text, stdinText, false);
+  }
+
+  function runChain(raw, silent) {
+    var tokens = shellTokenize(raw);
+    var hasOp = tokens.some(function (t) { return t.type !== "text"; });
+    if (!hasOp) return false;
+
+    if (!silent) {
+      echoPrompt(raw);
+      history.push(raw);
+      historyIndex = 0;
+      historyDraft = "";
+    }
+    var i = 0, current = "", pipeText = null;
+    while (i < tokens.length) {
+      var t = tokens[i];
+      if (t.type === "text") { current += (current ? " " : "") + t.value; }
+      else if (t.type === "pipe") {
+        var cap = runChainSegment(current, pipeText, true) || [];
+        pipeText = cap.join("\n") || null;
+        current = "";
+        if (chainFailed && envOptions.errexit) { chainFailed = false; break; }
+      }
+      else if (t.type === "semi") {
+        runChainSegment(current, pipeText, false);
+        pipeText = null;
+        current = "";
+        if (chainFailed && envOptions.errexit) { chainFailed = false; break; }
+        chainFailed = false;
+      }
+      else if (t.type === "and") {
+        runChainSegment(current, pipeText, false);
+        pipeText = null;
+        current = "";
+        if (chainFailed) {
+          // errexit does not abort an && list whose failure is not its last
+          // command: skip this list but keep going after the next `;`
+          while (i + 1 < tokens.length && tokens[i + 1].type !== "semi") i++;
+          chainFailed = false;
+        }
+      }
+      else if (t.type === "redir" || t.type === "append") {
+        var target = null;
+        if (i + 1 < tokens.length && tokens[i + 1].type === "text") {
+          target = tokens[i + 1].value;
+          i++;
+        }
+        if (!target) {
+          var op = t.type === "append" ? ">>" : ">";
+          print(op + ": syntax error: expected a file after '" + op + "'", "err");
+          break;   // malformed line: don't treat trailing operators as commands
+        }
+        var captured = runChainSegment(current, pipeText, true) || [];
+        writeRedirect(target, captured, t.type === "append");
+        if (chainFailed && envOptions.errexit) { chainFailed = false; break; }
+        pipeText = null;
+        current = "";
+      }
+      i++;
+    }
+    if (current.trim()) runChainSegment(current, pipeText, false);
+    return true;
+  }
+
+  function runCommand(raw) {
+    raw = raw.trim();
+    chainFailed = false;
+    if (raw === "") { scrollBottom(); return; }
+
+    if (runChain(raw)) { updateCwdHint(); scrollBottom(); return; }
+
+    echoPrompt(raw);
+    history.push(raw);
+    historyIndex = 0;
+    historyDraft = "";
+    var args = resolveAliases(splitArgsText(raw));
+    var cmdName = args.shift();
+    if (envOptions.xtrace) printDom("$ " + raw, "dim");
+    var cmd = commands[cmdName];
+    if (cmd && cmd.fn) {
+      cmd.fn(args);
+    } else {
+      print(cmdName + ": command not found", "err");
+      var sug = closestCommand(cmdName);
+      if (sug) print("Did you mean: " + sug + "?", "warn");
+    }
+    updateCwdHint();
+    scrollBottom();
+  }
+
+  /* ---------------------------------------------------------------
+   * Autocomplete
+   * ------------------------------------------------------------- */
+  function autocomplete() {
+    var text = inputEl.value;
+    var words = text.split(" ");
+    var partial = words[words.length - 1];
+    var candidates = [];
+
+    // If it's the first word → complete commands
+    if (words.length === 1) {
+      Object.keys(commands).forEach(function (k) {
+        if (!commands[k].hidden && k.startsWith(partial)) candidates.push(k);
+      });
+    } else {
+      // Otherwise → complete filesystem paths from cwd
+      candidates = fsCandidates(partial);
+    }
+
+    if (!candidates.length) return;
+    if (candidates.length === 1) {
+      var rest = words.slice(0, -1);
+      rest.push(candidates[0]);
+      var suffix = " ";
+      if (words.length > 1 && candidates[0].charAt(candidates[0].length - 1) === "/") suffix = "";
+      inputEl.value = rest.join(" ") + suffix;
+      moveCaretEnd();
+      return;
+    }
+    // Multiple matches → print them, keep typing
+    print(candidates.join("   "));
+    echoPrompt(text);
+    inputEl.focus();
+  }
+
+  function fsCandidates(partial) {
+    var out = [];
+    var target = cwd;
+    var prefix = "";
+    if (partial.indexOf("/") >= 0) {
+      var parts = partial.split("/");
+      prefix = parts.slice(0, -1).join("/") + "/";
+      target = expandPath(prefix === "" ? "." : prefix);
+    }
+    var e = resolveEntry(target);
+    if (e.node == null || e.type !== "dir") return out;
+    var base = partial.split("/").pop();
+    Object.keys(e.node.dirs || {}).forEach(function (n) {
+      if (n.startsWith(base)) out.push(prefix + n + "/");
+    });
+    Object.keys(e.node.files || {}).forEach(function (n) {
+      if (n.startsWith(base)) out.push(prefix + n);
+    });
+    return out;
+  }
+
+  /* ---------------------------------------------------------------
+   * cwd hint in the prompt bar
+   * ------------------------------------------------------------- */
+  function updateCwdHint() {
+    cwdHintEl.textContent = pathDisplay(cwd).replace(/^\/home\/user(\/|$)/, "~$1");
+  }
+
+  /* ---------------------------------------------------------------
+   * nano editor keybindings
+   * ------------------------------------------------------------- */
+  /* -------- editor keybindings (shared by nano & vim) -------- */
+  editorBuf.addEventListener("keydown", function (e) {
+    var key = e.key;
+
+    /* nano: Ctrl+S save / Ctrl+X exit / Ctrl+G help */
+    if (editing.mode === "nano") {
+      if (e.ctrlKey && (key === "s" || key === "S")) { e.preventDefault(); saveFile(); renderEditor(); return; }
+      if (e.ctrlKey && (key === "x" || key === "X")) { e.preventDefault(); exitEditor(true); return; }
+      if (e.ctrlKey && (key === "g" || key === "G")) { e.preventDefault(); printHTML("^G  Get Help  ^X  Exit  ^S  Save", "dim"); return; }
+      if (key.length === 1 || key === "Backspace" || key === "Delete" || key === "Enter" || key === "Tab") editing.modified = true;
+      setTimeout(renderEditor, 0);
+      return;
+    }
+
+    /* ---- vim ---- */
+    if (e.ctrlKey && (key === "s" || key === "S")) { e.preventDefault(); saveFile(); renderEditor(); return; }
+    if (e.ctrlKey && (key === "x" || key === "X")) { e.preventDefault(); exitEditor(true); return; }
+
+    /* Esc → NORMAL mode */
+    if (key === "Escape") {
+      e.preventDefault();
+      editing.insert = false;
+      editing.pendingD = false;
+      editorBuf.readOnly = true;
+      editorBuf.classList.add("readonly");
+      renderEditor();
+      return;
+    }
+
+    if (!editing.insert) {
+      e.preventDefault();
+      /* i/a → insert (a moves the caret one character right first) */
+      if (key === "i" || key === "a") {
+        editing.insert = true;
+        editorBuf.readOnly = false;
+        editorBuf.classList.remove("readonly");
+        if (key === "a") {
+          var ap = editorBuf.selectionStart || 0;
+          if (ap < editorBuf.value.length) editorBuf.setSelectionRange(ap + 1, ap + 1);
+        }
+        renderEditor();
+        editorBuf.focus();
+        return;
+      }
+      /* : → open the vim command line */
+      if (key === ":") {
+        editing.command = true;
+        renderEditor();
+        vimCmd.value = ":";
+        vimCmd.focus();
+        return;
+      }
+      /* x → delete char under cursor */
+      if (key === "x") {
+        var pos = editorBuf.selectionStart || 0;
+        if (pos < editorBuf.value.length) {
+          editorBuf.value = editorBuf.value.slice(0, pos) + editorBuf.value.slice(pos + 1);
+          editing.modified = true;
+          editorBuf.setSelectionRange(pos, pos);
+          renderEditor();
+        }
+        return;
+      }
+      /* d d → delete whole line */
+      if (key === "d" && !editing.pendingD) { editing.pendingD = true; return; }
+      if (key === "d" && editing.pendingD) {
+        editing.pendingD = false;
+        var v = editorBuf.value, p = editorBuf.selectionStart || 0;
+        var ls = v.lastIndexOf("\n", p - 1) + 1;
+        var le = v.indexOf("\n", p);
+        var leIdx = le === -1 ? v.length : le;
+        editorBuf.value = v.slice(0, ls) + v.slice(le === -1 ? leIdx : leIdx + 1);
+        editing.modified = true;
+        editorBuf.setSelectionRange(ls, ls);
+        renderEditor();
+        return;
+      }
+      editing.pendingD = false;
+      if (key !== "Shift" && key.length === 1) print("vim: '" + key + "' not implemented in NORMAL mode (i=insert, :=command)", "warn");
+      return;
+    }
+
+    /* vim INSERT mode: any real edit marks the buffer modified */
+    if (key.length === 1 || key === "Backspace" || key === "Delete" || key === "Enter" || key === "Tab") editing.modified = true;
+    setTimeout(renderEditor, 0);
+  });
+
+  /* Keep the line-number gutter in sync when the buffer scrolls */
+  editorBuf.addEventListener("scroll", function () {
+    editorGut.scrollTop = editorBuf.scrollTop;
+  });
+
+  /* -------- vim command line (the ":" prompt) -------- */
+  vimCmd.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      editing.command = false;
+      editorBuf.readOnly = true;
+      renderEditor();
+      editorBuf.focus();
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var cmd = vimCmd.value.replace(/^:/, "").trim();
+      editing.command = false;
+      if (cmd === "w" || cmd === "w!") {
+        saveFile();
+      } else if (cmd === "q") {
+        if (editing.modified) { print("E37: No write since last change (use :q!)", "warn"); }
+        else { exitEditor(false); return; }
+      } else if (cmd === "wq" || cmd === "x") {
+        saveFile(); exitEditor(false); return;
+      } else if (cmd === "q!") {
+        exitEditor(false); return;
+      } else {
+        print("E492: Not an editor command: " + cmd, "err");
+      }
+      renderEditor();
+      editorBuf.focus();
+    }
+  });
+
+  /* ---------------------------------------------------------------
+   * Toolbar controls (the theme/font pickers were removed from the
+   * toolbar — use the `theme` / `font` commands instead)
+   * ------------------------------------------------------------- */
+  if (themeSelect) themeSelect.addEventListener("change", function () { applyTheme(themeSelect.value); });
+  if (fontSelect) fontSelect.addEventListener("change", function () { applyFont(parseInt(fontSelect.value, 10)); });
+
+  /* ---------------------------------------------------------------
+   * Tiling terminal host
+   * The first terminal is rendered directly on the page. "+ terminal"
+   * spawns real iframe terminals of this same file — they share the
+   * FS and ~/.bashrc config through localStorage and tile in the
+   * workspace. An iframe URL carries ?term=N, which the app detects
+   * as "embedded" mode (host chrome hidden, terminal fills the frame).
+   * ------------------------------------------------------------- */
+  var termSeq      = 1;
+  var embeddedTerm = /[?&]term=/.test(String(location.search || ""));
+  if (embeddedTerm) document.body.classList.add("embedded");
+
+  function updateLayout() {
+    var panels = [];
+    if (workspaceEl && workspaceEl.children) {
+      for (var i = 0; i < workspaceEl.children.length; i++) panels.push(workspaceEl.children[i]);
+    }
+    panels = panels.filter(function (p) { return p.classList && p.classList.contains && p.classList.contains("term-panel"); });
+    document.body.classList.toggle("multi", panels.length > 1);
+    panels.forEach(function (p) {
+      var x = p.querySelector ? p.querySelector(".panel-close") : null;
+      if (x) x.style.display = panels.length > 1 ? "" : "none";
+    });
+  }
+
+  function closePanel(panel) {
+    var panels = [];
+    if (workspaceEl && workspaceEl.children) {
+      for (var i = 0; i < workspaceEl.children.length; i++) panels.push(workspaceEl.children[i]);
+    }
+    panels = panels.filter(function (p) { return p.classList && p.classList.contains && p.classList.contains("term-panel"); });
+    if (panels.length <= 1) return;              // keep at least one terminal
+    if (workspaceEl.removeChild) workspaceEl.removeChild(panel);
+    updateLayout();
+  }
+
+  function addTerminal() {
+    termSeq++;
+    var panel = document.createElement("div");
+    panel.className = "term-panel";
+    var frame = document.createElement("iframe");
+    frame.className = "term-iframe";
+    frame.title = "WebTerminal " + termSeq;
+    var base = String(location.href || "index.html").split(/[?#]/)[0];
+    frame.src = base + "?term=" + termSeq;
+    panel.appendChild(frame);
+    var close = document.createElement("div");
+    close.className = "panel-close";
+    close.textContent = "×";
+    close.title = "Close terminal";
+    close.addEventListener("click", function () { closePanel(panel); });
+    panel.appendChild(close);
+    if (workspaceEl.appendChild) workspaceEl.appendChild(panel);
+    updateLayout();
+  }
+
+  if (newTermBtn) newTermBtn.addEventListener("click", addTerminal);
+  updateLayout();
+
+  /* ---------------------------------------------------------------
+   * Boot
+   * ------------------------------------------------------------- */
+  var savedTheme = null, savedFont = 0;
+  try {
+    savedTheme = localStorage.getItem(THEME_KEY);
+    savedFont = parseInt(localStorage.getItem(FONT_KEY) || "", 10);
+  } catch (e) { /* ignore */ }
+  applyTheme(/^[a-z0-9-]+$/.test(savedTheme || "") ? savedTheme : "vs");
+  applyFont(isFinite(savedFont) && savedFont > 0 && savedFont <= 32 ? savedFont : 14);
+  loadFs();
+  loadBashrc();
+  updateCwdHint();
+  showBanner(false);
+  inputEl.focus();
+})();
+</script>
+</body>
+</html>
